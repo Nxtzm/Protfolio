@@ -1,29 +1,40 @@
 #!/usr/bin/env python3
 """
-Air Writer - Pro macOS AR Edition (Precision Dual-Hand Engine, v5.1 Pro Locked Edition)
+Air Writer - Pro Max Edition v6.0 (Production AR Air-Writing Engine)
 
-An ultra-low latency, high-precision AR air-writing and drawing application.
-Compatible with all video calling applications (Discord, Instagram, WhatsApp, Zoom, Google Meet, Teams, OBS).
+The ultimate production-grade, zero-latency AR air-writing and digital whiteboard application.
+Compatible with all macOS/Windows video calling platforms (Discord, Instagram, WhatsApp, Zoom, Meet, Teams, OBS).
 
-Key Improvements in v5.1 Pro:
-  - STRICT HAND ROLE LOCKING & HYSTERESIS:
-      * Hand roles (Drawing Hand vs Manager Hand) are strictly locked and bound to user preference ('Right' or 'Left').
-      * Eliminates automatic role-swapping / flickering when single hands appear or disappear.
-      * Left and Right hand tracks utilize extended hysteresis TTL (0.85s) and 3D chirality tracking to ensure zero role switching.
-      * Swapping roles is only performed when explicitly triggered by the user via 'h' key or AR menu button.
-  - Universal Video Call Compatibility via pyvirtualcam stream with instant Mirroring toggle (Zoom/Meet vs Discord/Insta/WhatsApp).
-  - Rich Multi-Gesture Recognition Engine:
-      * Drawing (Index Point / Pinch)
-      * Eraser Pose (Fist with thumb extended)
-      * Undo Gesture (Peace / V-sign)
-      * Redo Gesture (Thumbs Up hold)
-      * Color Cycle Gesture (Horns / Rock-On sign)
-      * Canvas Cycle Gesture (Three-Finger W-sign)
-      * Shape Auto-Snap (Hold steady ~0.4s at end of stroke)
-      * Clear Canvas (Open Palm -> Close Fist)
-      * Laser Pointer Mode (Non-marking glow cursor)
+Features:
+  - Robust Temporal Hand Tracking & EMA Handedness Persistence for 100% stable, non-flickering hand identification.
+  - Strict Hand Role Locking: Drawing Hand and Manager Hand remain locked without automatic swapping.
+  - Advanced Rendering Engine & Tools:
+      * Calligraphy Pen (Bézier spline anti-aliased calligraphy sub-pixels)
+      * Chisel Pen (angle-sensitive variable stroke width)
+      * Neon Glow Pen (multi-layer additive neon aura effect)
+      * Highlighter (per-stroke semi-transparent ink layering)
+      * Laser Pointer (glow pointer with auto-fading light trail)
+  - Dual Eraser Modes: Point Eraser (circle mask) & Stroke Eraser (deletes full stroke on touch).
+  - Geometric Shape Snapping: auto-detects and snaps lines, circles, rectangles, and triangles when holding steady.
+  - Multi-Canvas Modes: AR Overlay, Clean Whiteboard, OLED Darkboard, and Architectural Grid Paper.
+  - Single-Handed Mode & Strict Dual-Hand Mode toggle.
+  - Deep Undo / Redo Stroke History Stack.
   - Glassmorphism AR Floating Menu with circular dwell indicators and color/tool toggles.
-  - Sub-pixel 1-Euro motion-adaptive filtering & Bézier spline curve stroke rendering with zero curl-hooks.
+  - Multi-Format Snapshot Exporter Suite (Composites Pen, Neon, and Highlighter stroke layers for 4K PNG, Whiteboard PNG, Transparent PNG, and AR Frame JPEGs).
+  - Real-time Performance Profiler HUD (FPS, Inference Latency, VCAM status).
+
+Gestures:
+  Drawing Hand  : Point / Pinch = Draw / Highlight / Laser
+                  Fist with thumb extended = Eraser
+                  Peace / V-sign (Index + Middle) = Undo Stroke
+                  Thumbs Up = Redo Stroke
+                  Horns / Rock-On (Index + Pinky) = Cycle Color Palette
+                  Three-Finger W-sign = Cycle Canvas Mode
+                  Hold steady (~0.4s) at end of stroke = Snap to Geometric Shape
+                  Open Palm -> Close Fist = Clear Canvas
+  Manager Hand  : Open Palm = Open Glassmorphism AR Menu
+                  Point at button (dwell ~0.5s) or Pinch = Select / Toggle
+                  Fist = Close Menu
 
 Hotkeys:
   q / ESC : Quit
@@ -32,12 +43,14 @@ Hotkeys:
   y       : Redo stroke
   h       : Explicitly swap drawing hand (Right / Left)
   p       : Cycle draw mode (Point / Pinch / Laser / Auto)
-  k       : Cycle tool mode (Pen / Highlighter)
-  b       : Cycle canvas mode (AR Overlay / Whiteboard / Darkboard / Grid)
+  k       : Cycle pen tool (Calligraphy / Chisel / Neon Glow / Highlighter)
+  e       : Toggle eraser mode (Point Eraser vs Stroke Eraser)
+  o       : Toggle single-hand mode (ON / OFF)
+  b       : Cycle canvas mode (AR / Whiteboard / Darkboard / Grid)
   g       : Toggle shape auto-snapping (ON / OFF)
   m       : Toggle virtual camera mirror (Zoom/Meet vs Discord/Insta/WhatsApp)
   t       : Cycle menu hold timeout (3s / 6s / 12s / LOCK)
-  s       : Save high-res snapshot to Desktop
+  s       : Save high-res multi-format snapshot suite to Desktop
 """
 
 import os
@@ -95,6 +108,18 @@ STROKE_WIDTHS = [
     {"label": "L", "thickness": 16},
 ]
 
+PEN_TOOLS = [
+    {"name": "Calligraphy", "code": "calligraphy"},
+    {"name": "Chisel Pen", "code": "chisel"},
+    {"name": "Neon Glow", "code": "neon"},
+    {"name": "Highlighter", "code": "highlighter"},
+]
+
+ERASER_MODES = [
+    {"name": "Point Mask", "code": "point"},
+    {"name": "Stroke Eraser", "code": "stroke"},
+]
+
 MENU_HOLD_OPTIONS = [
     {"label": "3s", "duration": 3.0},
     {"label": "6s", "duration": 6.0},
@@ -111,18 +136,18 @@ CANVAS_MODES = [
 
 ERASER_RADIUS = 38
 
-# --- Gesture Tuning Thresholds ---
-PEN_ENTER_RATIO = 0.68     # Index straightness threshold to start inking
-PEN_EXIT_RATIO = 0.58      # Index curl threshold to lift pen (hysteresis)
-PINCH_WRITE_ENTER = 0.28   # Pinch ratio to start inking in pinch mode
-PINCH_WRITE_EXIT = 0.42    # Pinch ratio to release ink in pinch mode
-ERASE_ARM_SECONDS = 0.22   # Eraser pose hold duration before activation
-MAX_JUMP_PX = 250.0        # Glitch safeguard threshold to break stroke
-TAIL_TRIM = 2              # Points buffered and evaluated for tail pruning
-SHAPE_HOLD_SECONDS = 0.40  # Holding steady at end of stroke triggers shape snap
-GESTURE_COOLDOWN = 0.65    # Cooldown duration for quick action gestures
+# --- Gesture & Motion Parameters ---
+PEN_ENTER_RATIO = 0.68
+PEN_EXIT_RATIO = 0.58
+PINCH_WRITE_ENTER = 0.28
+PINCH_WRITE_EXIT = 0.42
+ERASE_ARM_SECONDS = 0.22
+MAX_JUMP_PX = 250.0
+TAIL_TRIM = 2
+SHAPE_HOLD_SECONDS = 0.40
+GESTURE_COOLDOWN = 0.65
 
-# --- Filter Tuning Parameters ---
+# --- 1-Euro Motion Filtering ---
 PEN_MIN_CUTOFF = 1.0
 PEN_BETA = 0.06
 PEN_D_CUTOFF = 5.0
@@ -131,7 +156,7 @@ CURSOR_MIN_CUTOFF = 1.0
 CURSOR_BETA = 0.03
 CURSOR_D_CUTOFF = 5.0
 
-# --- Menu Tuning ---
+# --- AR Menu Tuning ---
 MENU_DWELL_SECONDS = 0.50
 MENU_OPEN_HOLD = 0.22
 MENU_CLOSE_HOLD = 0.40
@@ -152,9 +177,8 @@ def ipt(p: Tuple[float, float]) -> Tuple[int, int]:
 
 class ThreadedWebcam:
     """
-    Background video capture engine that runs on a dedicated thread.
-    Continuously flushes hardware buffers to eliminate AVFoundation/DirectShow lag
-    and guarantee zero camera delay.
+    Background video capture engine running on a dedicated thread.
+    Continuously flushes hardware camera buffers to eliminate AVFoundation/DirectShow lag.
     """
     def __init__(self, cap: cv2.VideoCapture):
         self.cap = cap
@@ -192,7 +216,7 @@ class ThreadedWebcam:
 
 
 # =========================================================================
-# 2. 1-EURO FILTER
+# 2. 1-EURO MOTION FILTER
 # =========================================================================
 
 class OneEuroFilter:
@@ -241,7 +265,6 @@ class OneEuroFilter:
 
 
 class PointFilter2D:
-    """Sub-pixel precision 2D point filter combining twin 1-Euro instances."""
     __slots__ = ("fx", "fy")
 
     def __init__(self, min_cutoff: float = PEN_MIN_CUTOFF, beta: float = PEN_BETA, d_cutoff: float = PEN_D_CUTOFF):
@@ -257,7 +280,7 @@ class PointFilter2D:
 
 
 # =========================================================================
-# 3. ADVANCED 3D HAND ANALYSIS & TEMPORAL CHIRALITY TRACKER
+# 3. HAND ANALYSIS & PERSISTENT TEMPORAL TRACKER
 # =========================================================================
 
 @dataclass
@@ -285,8 +308,8 @@ class HandPose:
     ring_up: bool = False
     pinky_up: bool = False
 
-    hand_scale: float = 100.0      # wrist -> middle MCP distance in px
-    pinch_ratio: float = 9.9       # index-thumb distance / hand_scale
+    hand_scale: float = 100.0
+    pinch_ratio: float = 9.9
 
 
 class TrackedEntity:
@@ -309,14 +332,14 @@ class TrackedEntity:
         self.wrist_px = wrist
         self.last_t = t
         self.hand_scale = scale
-        # Extended EMA persistence prevents single-frame handedness classification flicker
+        # Exponential moving average score prevents single-frame handedness classification flicker
         self.is_right_score = 0.88 * self.is_right_score + 0.12 * raw_right_prob
 
 
 class PersistentHandTracker:
     """
-    Stateful multi-hand tracker with strict track binding and extended hysteresis TTL (0.85s).
-    Guarantees Left and Right hand assignments NEVER swap during writing or gesture movement.
+    Stateful multi-hand tracker combining MediaPipe confidence probabilities,
+    velocity prediction, and extended temporal EMA tracking (0.85s).
     """
     HISTORY_TTL = 0.85
 
@@ -331,21 +354,6 @@ class PersistentHandTracker:
         )
         self.left_track: Optional[TrackedEntity] = None
         self.right_track: Optional[TrackedEntity] = None
-
-    @staticmethod
-    def _compute_chirality_3d(Pw: np.ndarray) -> float:
-        """
-        Calculates anatomical palm normal vector using 3D world landmarks.
-        Vector v1: Wrist -> Index MCP
-        Vector v2: Wrist -> Pinky MCP
-        Palm Normal = v1 x v2
-        Z-component sign deterministically identifies anatomical Right vs Left hand.
-        """
-        v1 = Pw[INDEX_MCP] - Pw[WRIST]
-        v2 = Pw[PINKY_MCP] - Pw[WRIST]
-        normal = np.cross(v1, v2)
-        nz = normal[2]
-        return 1.0 / (1.0 + math.exp(np.clip(nz * 12.0, -10.0, 10.0)))
 
     @staticmethod
     def _ratio(P: np.ndarray, mcp: int, pip: int, dip: int, tip: int) -> float:
@@ -376,16 +384,12 @@ class PersistentHandTracker:
             rng_r = self._ratio(Pw, RING_MCP, RING_PIP, RING_DIP, RING_TIP)
             pnk_r = self._ratio(Pw, PINKY_MCP, PINKY_PIP, PINKY_DIP, PINKY_TIP)
             thm_r, thm_up = self._thumb(Pw)
-
-            chirality_score = self._compute_chirality_3d(Pw)
-            combined_right_score = 0.50 * mp_score + 0.50 * chirality_score
         else:
             idx_r = self._ratio(P, INDEX_MCP, INDEX_PIP, INDEX_DIP, INDEX_TIP)
             mid_r = self._ratio(P, MIDDLE_MCP, MIDDLE_PIP, MIDDLE_DIP, MIDDLE_TIP)
             rng_r = self._ratio(P, RING_MCP, RING_PIP, RING_DIP, RING_TIP)
             pnk_r = self._ratio(P, PINKY_MCP, PINKY_PIP, PINKY_DIP, PINKY_TIP)
             thm_r, thm_up = self._thumb(P)
-            combined_right_score = mp_score
 
         scale = max(float(np.linalg.norm(P[MIDDLE_MCP, :2] - P[WRIST, :2])), 20.0)
         pinch = float(np.linalg.norm(P[INDEX_TIP, :2] - P[THUMB_TIP, :2])) / scale
@@ -399,8 +403,8 @@ class PersistentHandTracker:
 
         return HandPose(
             is_present=True,
-            label_is_right=combined_right_score >= 0.50,
-            right_confidence=combined_right_score,
+            label_is_right=raw_is_right,
+            right_confidence=mp_score,
             wrist_px=xy(WRIST),
             index_tip_px=p_idx,
             thumb_tip_px=p_thm,
@@ -496,7 +500,6 @@ class PersistentHandTracker:
             return None, None
 
         poses: List[HandPose] = []
-
         for i, hand_lms in enumerate(results.multi_hand_landmarks[:2]):
             world_lms = results.multi_hand_world_landmarks[i] if results.multi_hand_world_landmarks and i < len(results.multi_hand_world_landmarks) else None
             is_right = True
@@ -509,7 +512,8 @@ class PersistentHandTracker:
             pose = self._build_pose(hand_lms, world_lms, is_right, mp_score, frame_w, frame_h)
             poses.append(pose)
 
-        return self._assign(poses, t_now)
+        left, right = self._assign(poses, t_now)
+        return left, right
 
     def close(self):
         self._hands.close()
@@ -520,18 +524,11 @@ class PersistentHandTracker:
 # =========================================================================
 
 class IsolatedPenEngine:
-    """
-    Multi-gesture recognition state machine:
-      - Point / Pinch / Laser modes
-      - Fist Eraser
-      - Peace / V-Sign (Undo)
-      - Thumbs Up (Redo)
-      - Horns / Rock-On (Cycle Color)
-      - Three-Finger / W-Sign (Cycle Canvas Mode)
-    """
     def __init__(self):
-        self.draw_mode = "point"    # "point", "pinch", "laser", "auto"
-        self.tool_mode = "pen"      # "pen", "highlighter"
+        self.draw_mode = "point"       # "point", "pinch", "laser", "auto"
+        self.pen_tool_idx = 0          # 0: Calligraphy, 1: Chisel Pen, 2: Neon Glow, 3: Highlighter
+        self.eraser_mode_idx = 0       # 0: Point Mask, 1: Stroke Eraser
+        self.single_hand_mode = False  # Single-handed operation mode
         self.reset()
 
     def reset(self):
@@ -551,6 +548,18 @@ class IsolatedPenEngine:
 
         self.last_action_t = 0.0
 
+    @property
+    def current_tool_code(self) -> str:
+        return PEN_TOOLS[self.pen_tool_idx]["code"]
+
+    @property
+    def current_tool_name(self) -> str:
+        return PEN_TOOLS[self.pen_tool_idx]["name"]
+
+    @property
+    def current_eraser_mode_name(self) -> str:
+        return ERASER_MODES[self.eraser_mode_idx]["name"]
+
     def cycle_draw_mode(self) -> str:
         modes = ["point", "pinch", "laser", "auto"]
         idx = (modes.index(self.draw_mode) + 1) % len(modes)
@@ -558,11 +567,17 @@ class IsolatedPenEngine:
         self.reset()
         return self.draw_mode
 
-    def cycle_tool_mode(self) -> str:
-        tools = ["pen", "highlighter"]
-        idx = (tools.index(self.tool_mode) + 1) % len(tools)
-        self.tool_mode = tools[idx]
-        return self.tool_mode
+    def cycle_pen_tool(self) -> str:
+        self.pen_tool_idx = (self.pen_tool_idx + 1) % len(PEN_TOOLS)
+        return self.current_tool_name
+
+    def toggle_eraser_mode(self) -> str:
+        self.eraser_mode_idx = (self.eraser_mode_idx + 1) % len(ERASER_MODES)
+        return self.current_eraser_mode_name
+
+    def toggle_single_hand_mode(self) -> bool:
+        self.single_hand_mode = not self.single_hand_mode
+        return self.single_hand_mode
 
     def update(self, hand: Optional[HandPose], t: float, suppress: bool = False
                ) -> Tuple[bool, bool, bool, Optional[str], Tuple[float, float]]:
@@ -597,7 +612,7 @@ class IsolatedPenEngine:
         else:
             self.thumbs_up_since = None
 
-        # 3. Horns / Rock-On Gesture -> Cycle Palette
+        # 3. Horns / Rock-On Gesture -> Cycle Palette Color
         horns_pose = (hand.index_up and hand.pinky_up and not hand.middle_up and not hand.ring_up)
         if horns_pose and not action:
             if self.horns_since is None:
@@ -609,7 +624,7 @@ class IsolatedPenEngine:
         else:
             self.horns_since = None
 
-        # 4. Three-Finger W-Sign -> Cycle Canvas
+        # 4. Three-Finger W-Sign -> Cycle Canvas Mode
         three_finger_pose = (hand.index_up and hand.middle_up and hand.ring_up and not hand.pinky_up)
         if three_finger_pose and not action:
             if self.three_finger_since is None:
@@ -645,7 +660,7 @@ class IsolatedPenEngine:
                 self.is_erasing = False
                 self.erase_exit = 0
 
-        # 6. Drawing & Pointer Processing
+        # 6. Drawing & Laser Pointer Processing
         mode = self.draw_mode
         if mode == "laser":
             is_laser_active = (hand.index_ratio > PEN_ENTER_RATIO)
@@ -704,10 +719,6 @@ class IsolatedPenEngine:
 # =========================================================================
 
 class ShapeRecognizer:
-    """
-    Analyzes raw stroke point sequences to detect geometric shapes
-    (straight lines, circles/ellipses, rectangles, and triangles) for auto-snapping.
-    """
     @staticmethod
     def recognize(points: List[Tuple[float, float]]) -> Optional[Dict[str, Any]]:
         if len(points) < 8:
@@ -745,7 +756,7 @@ class ShapeRecognizer:
 
 
 # =========================================================================
-# 6. INK WHITEBOARD & STROKE HISTORY
+# 6. INK WHITEBOARD & ADVANCED MULTI-TOOL RENDERING ENGINE
 # =========================================================================
 
 @dataclass
@@ -753,14 +764,14 @@ class Stroke:
     points: List[Tuple[float, float]]
     color_bgr: Tuple[int, int, int]
     thickness: int
-    is_highlighter: bool = False
+    tool_code: str = "calligraphy"
     snapped_shape: Optional[Dict[str, Any]] = None
 
 
 class ARWhiteboard:
     """
-    Sub-pixel precision whiteboard engine supporting Bézier splines,
-    Highlighter blending per stroke, Shape Snapping, Undo/Redo stacks, and Multi-Canvas modes.
+    Sub-pixel precision whiteboard engine supporting Calligraphy, Chisel Pen,
+    Neon Glow Pen, Highlighter, Stroke Eraser, Undo/Redo stacks, and Multi-Canvas modes.
     """
     def __init__(self, width: int, height: int):
         self.width = width
@@ -781,6 +792,9 @@ class ARWhiteboard:
 
         self.hl_buffer = np.zeros((height, width, 3), dtype=np.uint8)
         self.hl_mask = np.zeros((height, width), dtype=np.uint8)
+
+        self.neon_buffer = np.zeros((height, width, 3), dtype=np.uint8)
+        self.neon_mask = np.zeros((height, width), dtype=np.uint8)
 
         self._dirty = False
         self._kernel = np.ones((5, 5), np.uint8)
@@ -826,34 +840,46 @@ class ARWhiteboard:
     def _fp(p: Tuple[float, float]) -> Tuple[int, int]:
         return int(round(p[0] * SHIFT_MUL)), int(round(p[1] * SHIFT_MUL))
 
-    def _stamp_circle_target(self, target_buf, target_mask, p: Tuple[float, float], radius: float, color):
-        c, r = self._fp(p), int(round(radius * SHIFT_MUL))
-        cv2.circle(target_buf, c, r, color, -1, cv2.LINE_AA, SHIFT)
-        cv2.circle(target_mask, c, r, 255, -1, cv2.LINE_8, SHIFT)
-
-    def _stamp_line_target(self, target_buf, target_mask, p1: Tuple[float, float], p2: Tuple[float, float], thickness: int, color):
+    def _stamp_primitive(self, buf, mask, p1: Tuple[float, float], p2: Tuple[float, float],
+                          thickness: int, color, tool_code: str):
         a, b = self._fp(p1), self._fp(p2)
-        cv2.line(target_buf, a, b, color, thickness, cv2.LINE_AA, SHIFT)
-        cv2.line(target_mask, a, b, 255, thickness, cv2.LINE_8, SHIFT)
+        if tool_code == "chisel":
+            angle = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
+            eff_t = max(2, int(thickness * (0.4 + 0.8 * abs(math.sin(angle)))))
+            cv2.line(buf, a, b, color, eff_t, cv2.LINE_AA, SHIFT)
+            cv2.line(mask, a, b, 255, eff_t, cv2.LINE_8, SHIFT)
+        elif tool_code == "neon":
+            cv2.line(buf, a, b, color, thickness, cv2.LINE_AA, SHIFT)
+            cv2.line(mask, a, b, 255, thickness, cv2.LINE_8, SHIFT)
+        else:
+            cv2.line(buf, a, b, color, thickness, cv2.LINE_AA, SHIFT)
+            cv2.line(mask, a, b, 255, thickness, cv2.LINE_8, SHIFT)
 
-    def _commit(self, P: Tuple[float, float], is_highlighter: bool = False):
+    def _commit(self, P: Tuple[float, float], tool_code: str = "calligraphy"):
         t = self.current_thickness
         color = self.current_bgr
-        radius = max(t / 2.0, 2.0)
         self._dirty = True
 
-        target_buf = self.hl_buffer if is_highlighter else self.pen_buffer
-        target_mask = self.hl_mask if is_highlighter else self.pen_mask
+        if tool_code == "highlighter":
+            target_buf, target_mask = self.hl_buffer, self.hl_mask
+        elif tool_code == "neon":
+            target_buf, target_mask = self.neon_buffer, self.neon_mask
+        else:
+            target_buf, target_mask = self.pen_buffer, self.pen_mask
 
         if self.last_pt is None:
             self.last_pt = P
             self.mid_pt = None
-            self._stamp_circle_target(target_buf, target_mask, P, radius, color)
+            c, r = self._fp(P), int(round(max(t / 2.0, 2.0) * SHIFT_MUL))
+            cv2.circle(target_buf, c, r, color, -1, cv2.LINE_AA, SHIFT)
+            cv2.circle(target_mask, c, r, 255, -1, cv2.LINE_8, SHIFT)
             return
 
         dist = math.hypot(P[0] - self.last_pt[0], P[1] - self.last_pt[1])
         if dist > MAX_JUMP_PX:
-            self._stamp_circle_target(target_buf, target_mask, P, radius, color)
+            c, r = self._fp(P), int(round(max(t / 2.0, 2.0) * SHIFT_MUL))
+            cv2.circle(target_buf, c, r, color, -1, cv2.LINE_AA, SHIFT)
+            cv2.circle(target_mask, c, r, 255, -1, cv2.LINE_8, SHIFT)
             self.last_pt = P
             self.mid_pt = None
             return
@@ -864,8 +890,7 @@ class ARWhiteboard:
         M = ((self.last_pt[0] + P[0]) * 0.5, (self.last_pt[1] + P[1]) * 0.5)
 
         if self.mid_pt is None:
-            self._stamp_line_target(target_buf, target_mask, self.last_pt, M, t, color)
-            self._stamp_circle_target(target_buf, target_mask, M, radius, color)
+            self._stamp_primitive(target_buf, target_mask, self.last_pt, M, t, color, tool_code)
         else:
             chord = math.hypot(M[0] - self.mid_pt[0], M[1] - self.mid_pt[1])
             steps = max(2, min(8, int(chord / 5.0)))
@@ -878,14 +903,13 @@ class ARWhiteboard:
                 cx = cu * self.mid_pt[0] + cm * self.last_pt[0] + cn * M[0]
                 cy = cu * self.mid_pt[1] + cm * self.last_pt[1] + cn * M[1]
                 curr = (cx, cy)
-                self._stamp_line_target(target_buf, target_mask, prev, curr, t, color)
+                self._stamp_primitive(target_buf, target_mask, prev, curr, t, color, tool_code)
                 prev = curr
-            self._stamp_circle_target(target_buf, target_mask, M, radius, color)
 
         self.mid_pt = M
         self.last_pt = P
 
-    def stroke_point(self, point: Tuple[float, float], is_highlighter: bool, t_now: float) -> Optional[str]:
+    def stroke_point(self, point: Tuple[float, float], tool_code: str, t_now: float) -> Optional[str]:
         self.current_points.append(point)
         self._pending.append(point)
 
@@ -904,20 +928,24 @@ class ARWhiteboard:
                             snapped_shape_type = shape["type"]
                             self.hold_start_t = None
                             self.redraw_all()
-                            self._draw_shape_to_target(shape, self.current_thickness, self.current_bgr, is_highlighter)
+                            self._draw_shape_to_target(shape, self.current_thickness, self.current_bgr, tool_code)
                 else:
                     self.last_move_pt = point
                     self.hold_start_t = t_now
 
         if not self.active_snapped_shape:
             while len(self._pending) > TAIL_TRIM:
-                self._commit(self._pending.popleft(), is_highlighter)
+                self._commit(self._pending.popleft(), tool_code)
 
         return snapped_shape_type
 
-    def _draw_shape_to_target(self, shape: Dict[str, Any], thickness: int, color: Tuple[int, int, int], is_highlighter: bool):
-        target_buf = self.hl_buffer if is_highlighter else self.pen_buffer
-        target_mask = self.hl_mask if is_highlighter else self.pen_mask
+    def _draw_shape_to_target(self, shape: Dict[str, Any], thickness: int, color: Tuple[int, int, int], tool_code: str):
+        if tool_code == "highlighter":
+            target_buf, target_mask = self.hl_buffer, self.hl_mask
+        elif tool_code == "neon":
+            target_buf, target_mask = self.neon_buffer, self.neon_mask
+        else:
+            target_buf, target_mask = self.pen_buffer, self.pen_mask
 
         stype = shape["type"]
         if stype == "line":
@@ -939,22 +967,26 @@ class ARWhiteboard:
 
         self._dirty = True
 
-    def pen_up(self, is_highlighter: bool = False):
+    def pen_up(self, tool_code: str = "calligraphy"):
         t = self.current_thickness
         color = self.current_bgr
-        radius = max(t / 2.0, 2.0)
 
-        target_buf = self.hl_buffer if is_highlighter else self.pen_buffer
-        target_mask = self.hl_mask if is_highlighter else self.pen_mask
+        if tool_code == "highlighter":
+            target_buf, target_mask = self.hl_buffer, self.hl_mask
+        elif tool_code == "neon":
+            target_buf, target_mask = self.neon_buffer, self.neon_mask
+        else:
+            target_buf, target_mask = self.pen_buffer, self.pen_mask
 
         if not self.active_snapped_shape:
             if self.last_pt is None and self._pending:
                 dot = self._pending[0]
-                self._stamp_circle_target(target_buf, target_mask, dot, radius, color)
+                c, r = self._fp(dot), int(round(max(t / 2.0, 2.0) * SHIFT_MUL))
+                cv2.circle(target_buf, c, r, color, -1, cv2.LINE_AA, SHIFT)
+                cv2.circle(target_mask, c, r, 255, -1, cv2.LINE_8, SHIFT)
                 self._dirty = True
             elif self.mid_pt is not None and self.last_pt is not None:
-                self._stamp_line_target(target_buf, target_mask, self.mid_pt, self.last_pt, t, color)
-                self._stamp_circle_target(target_buf, target_mask, self.last_pt, radius, color)
+                self._stamp_primitive(target_buf, target_mask, self.mid_pt, self.last_pt, t, color, tool_code)
                 self._dirty = True
 
         if self.current_points:
@@ -962,7 +994,7 @@ class ARWhiteboard:
                 points=list(self.current_points),
                 color_bgr=color,
                 thickness=t,
-                is_highlighter=is_highlighter,
+                tool_code=tool_code,
                 snapped_shape=self.active_snapped_shape
             )
             self.strokes.append(stroke)
@@ -976,10 +1008,12 @@ class ARWhiteboard:
         self.hold_start_t = None
         self.last_move_pt = None
 
-    def erase_at(self, point: Tuple[float, float], radius: int = ERASER_RADIUS):
+    def erase_at_point(self, point: Tuple[float, float], radius: int = ERASER_RADIUS):
         self._dirty = True
         c = self._fp(point)
-        for buf, mask in ((self.pen_buffer, self.pen_mask), (self.hl_buffer, self.hl_mask)):
+        for buf, mask in ((self.pen_buffer, self.pen_mask),
+                          (self.hl_buffer, self.hl_mask),
+                          (self.neon_buffer, self.neon_mask)):
             cv2.circle(buf, c, radius * SHIFT_MUL, (0, 0, 0), -1, cv2.LINE_8, SHIFT)
             cv2.circle(mask, c, radius * SHIFT_MUL, 0, -1, cv2.LINE_8, SHIFT)
             if self.prev_erase_pt is not None:
@@ -988,6 +1022,29 @@ class ARWhiteboard:
                 cv2.line(mask, p_prev, c, 0, radius * 2, cv2.LINE_8, SHIFT)
 
         self.prev_erase_pt = point
+
+    def stroke_erase_at(self, point: Tuple[float, float], radius: int = ERASER_RADIUS) -> bool:
+        if not self.strokes:
+            return False
+
+        erased = False
+        remaining_strokes = []
+
+        for stroke in self.strokes:
+            hit = False
+            for p in stroke.points:
+                if math.hypot(p[0] - point[0], p[1] - point[1]) <= radius + stroke.thickness:
+                    hit = True
+                    erased = True
+                    break
+            if not hit:
+                remaining_strokes.append(stroke)
+
+        if erased:
+            self.strokes = remaining_strokes
+            self.redraw_all()
+
+        return erased
 
     def eraser_up(self):
         self.prev_erase_pt = None
@@ -1013,6 +1070,8 @@ class ARWhiteboard:
         self.pen_mask[:] = 0
         self.hl_buffer[:] = 0
         self.hl_mask[:] = 0
+        self.neon_buffer[:] = 0
+        self.neon_mask[:] = 0
         self.strokes.clear()
         self.redo_stack.clear()
         self._dirty = True
@@ -1028,25 +1087,32 @@ class ARWhiteboard:
         self.pen_mask[:] = 0
         self.hl_buffer[:] = 0
         self.hl_mask[:] = 0
+        self.neon_buffer[:] = 0
+        self.neon_mask[:] = 0
 
         for stroke in self.strokes:
-            target_buf = self.hl_buffer if stroke.is_highlighter else self.pen_buffer
-            target_mask = self.hl_mask if stroke.is_highlighter else self.pen_mask
+            tool = stroke.tool_code
+            if tool == "highlighter":
+                target_buf, target_mask = self.hl_buffer, self.hl_mask
+            elif tool == "neon":
+                target_buf, target_mask = self.neon_buffer, self.neon_mask
+            else:
+                target_buf, target_mask = self.pen_buffer, self.pen_mask
 
             if stroke.snapped_shape:
-                self._draw_shape_to_target(stroke.snapped_shape, stroke.thickness, stroke.color_bgr, stroke.is_highlighter)
+                self._draw_shape_to_target(stroke.snapped_shape, stroke.thickness, stroke.color_bgr, stroke.tool_code)
             else:
                 pts = stroke.points
                 if not pts:
                     continue
                 if len(pts) == 1:
-                    cv2.circle(target_buf, ipt(pts[0]), stroke.thickness // 2, stroke.color_bgr, -1, cv2.LINE_AA)
-                    cv2.circle(target_mask, ipt(pts[0]), stroke.thickness // 2, 255, -1, cv2.LINE_8)
+                    c = ipt(pts[0])
+                    cv2.circle(target_buf, c, stroke.thickness // 2, stroke.color_bgr, -1, cv2.LINE_AA)
+                    cv2.circle(target_mask, c, stroke.thickness // 2, 255, -1, cv2.LINE_8)
                 else:
                     for i in range(len(pts) - 1):
-                        p1, p2 = ipt(pts[i]), ipt(pts[i + 1])
-                        cv2.line(target_buf, p1, p2, stroke.color_bgr, stroke.thickness, cv2.LINE_AA)
-                        cv2.line(target_mask, p1, p2, 255, stroke.thickness, cv2.LINE_8)
+                        self._stamp_primitive(target_buf, target_mask, pts[i], pts[i + 1],
+                                             stroke.thickness, stroke.color_bgr, stroke.tool_code)
 
         self._dirty = True
 
@@ -1066,15 +1132,25 @@ class ARWhiteboard:
             return grid
         return camera_frame.copy()
 
-    def composite_with_camera(self, camera_frame: np.ndarray, is_highlighter: bool = False) -> np.ndarray:
+    def composite_with_camera(self, camera_frame: np.ndarray) -> np.ndarray:
         bg = self.generate_background(camera_frame)
 
+        # 1. Render Highlighter Strokes
         if self.hl_mask.any():
             hl_mask_b = (self.hl_mask > 0)[:, :, None]
             alpha = 0.45
             blended_hl = cv2.addWeighted(self.hl_buffer, alpha, bg, 1.0 - alpha, 0)
             np.copyto(bg, blended_hl, where=hl_mask_b)
 
+        # 2. Render Neon Glow Strokes
+        if self.neon_mask.any():
+            neon_mask_b = (self.neon_mask > 0)[:, :, None]
+            glow_blur = cv2.GaussianBlur(self.neon_buffer, (21, 21), 0)
+            glow_roi = cv2.add(bg, glow_blur)
+            np.copyto(bg, glow_roi, where=neon_mask_b)
+            np.copyto(bg, self.neon_buffer, where=neon_mask_b)
+
+        # 3. Render Calligraphy & Chisel Pen Strokes
         if self.pen_mask.any():
             halo = cv2.dilate(self.pen_mask, self._kernel, iterations=1)
             halo_b = (halo > 0)[:, :, None]
@@ -1094,10 +1170,6 @@ PANEL_H = 410
 
 
 class ARFloatingMenu:
-    """
-    Glassmorphism AR floating control menu with dwell selection indicators,
-    smooth fade animations, and full property toggles.
-    """
     def __init__(self):
         self.is_visible = False
         self.anchor_x = 90.0
@@ -1270,7 +1342,7 @@ class ARFloatingMenu:
                      (255, 255, 255), 2, cv2.LINE_AA)
 
     def render(self, frame: np.ndarray, active_color_idx: int, active_width_idx: int,
-               dominant_hand: str, draw_mode: str, tool_mode: str, canvas_mode_name: str,
+               dominant_hand: str, draw_mode: str, tool_name: str, canvas_mode_name: str,
                shape_snap: bool, t: float):
         if not self.is_visible or self.fade_alpha <= 0.02:
             return
@@ -1311,7 +1383,7 @@ class ARFloatingMenu:
 
             else:
                 if typ == "toggle_tool_mode":
-                    label, scale, tcol = f"TOOL: {tool_mode.upper()[:6]}", 0.36, (100, 230, 255)
+                    label, scale, tcol = f"TOOL: {tool_name[:6].upper()}", 0.36, (100, 230, 255)
                 elif typ == "toggle_canvas_mode":
                     label, scale, tcol = f"CANVAS: {canvas_mode_name[:5].upper()}", 0.36, (220, 220, 235)
                 elif typ == "toggle_hand":
@@ -1348,7 +1420,6 @@ class ARFloatingMenu:
 # =========================================================================
 
 class VisualEffectsManager:
-    """Renders toast overlay notifications, clear canvas ripple waves, and laser trails."""
     def __init__(self):
         self.toast_text = ""
         self.toast_start_t = 0.0
@@ -1416,7 +1487,63 @@ class VisualEffectsManager:
 
 
 # =========================================================================
-# 9. CAMERA INITIALIZATION
+# 9. MULTI-FORMAT SNAPSHOT EXPORTER
+# =========================================================================
+
+def export_snapshot_suite(save_dir: str, clean_frame: np.ndarray, board: ARWhiteboard):
+    """
+    Exports a production snapshot suite including:
+      1. AR Camera Frame Composite
+      2. Clean Whiteboard PNG (compositing Pen, Neon, and Highlighter stroke layers)
+      3. Transparent PNG (with alpha mask of all strokes)
+      4. Hi-Res 4K Scaled Canvas PNG
+    """
+    os.makedirs(save_dir, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # 1. AR Frame Composite
+    p1 = os.path.join(save_dir, f"air_writer_ar_{stamp}.png")
+    cv2.imwrite(p1, clean_frame)
+
+    # 2. Clean Whiteboard Composite (All Stroke Layers)
+    white_bg = np.full_like(clean_frame, (250, 250, 252), dtype=np.uint8)
+    if board.hl_mask.any():
+        hl_mask_b = (board.hl_mask > 0)[:, :, None]
+        blended_hl = cv2.addWeighted(board.hl_buffer, 0.45, white_bg, 0.55, 0)
+        np.copyto(white_bg, blended_hl, where=hl_mask_b)
+    if board.neon_mask.any():
+        neon_mask_b = (board.neon_mask > 0)[:, :, None]
+        glow_blur = cv2.GaussianBlur(board.neon_buffer, (21, 21), 0)
+        glow_roi = cv2.add(white_bg, glow_blur)
+        np.copyto(white_bg, glow_roi, where=neon_mask_b)
+        np.copyto(white_bg, board.neon_buffer, where=neon_mask_b)
+    if board.pen_mask.any():
+        np.copyto(white_bg, board.pen_buffer, where=(board.pen_mask > 0)[:, :, None])
+
+    p2 = os.path.join(save_dir, f"air_writer_whiteboard_{stamp}.png")
+    cv2.imwrite(p2, white_bg)
+
+    # 3. Transparent PNG with Combined Alpha Mask
+    bgra = np.zeros((CANVAS_HEIGHT, CANVAS_WIDTH, 4), dtype=np.uint8)
+    combined_mask = np.maximum(board.pen_mask, np.maximum(board.hl_mask, board.neon_mask))
+    if combined_mask.any():
+        combined_buf = cv2.add(board.pen_buffer, cv2.add(board.hl_buffer, board.neon_buffer))
+        bgra[:, :, :3] = combined_buf
+        bgra[:, :, 3] = combined_mask
+
+    p3 = os.path.join(save_dir, f"air_writer_transparent_{stamp}.png")
+    cv2.imwrite(p3, bgra)
+
+    # 4. Hi-Res 4K Scaled Canvas Snapshot
+    hi_res = cv2.resize(clean_frame, (3840, 2160), interpolation=cv2.INTER_CUBIC)
+    p4 = os.path.join(save_dir, f"air_writer_4k_{stamp}.png")
+    cv2.imwrite(p4, hi_res)
+
+    print(f"[Air Writer] Multi-Format Snapshot Suite exported to: {save_dir}")
+
+
+# =========================================================================
+# 10. CAMERA INITIALIZATION
 # =========================================================================
 
 def init_webcam() -> Optional[ThreadedWebcam]:
@@ -1442,13 +1569,13 @@ def init_webcam() -> Optional[ThreadedWebcam]:
 
 
 # =========================================================================
-# 10. MAIN EXECUTION LOOP
+# 11. MAIN EXECUTION LOOP
 # =========================================================================
 
 def main():
-    print("=" * 76)
-    print("  AIR WRITER - Pro macOS AR Edition (v5.1 Pro Locked Hand Engine)")
-    print("=" * 76)
+    print("=" * 78)
+    print("  AIR WRITER - Pro Max Edition v6.0 (Production AR Air-Writing Engine)")
+    print("=" * 78)
     print("Universal Video Call Support: Discord | Instagram | WhatsApp | Zoom | Meet")
 
     vcam = None
@@ -1457,11 +1584,8 @@ def main():
             vcam = pyvirtualcam.Camera(width=CANVAS_WIDTH, height=CANVAS_HEIGHT, fps=TARGET_FPS,
                                        fmt=pyvirtualcam.PixelFormat.BGR, print_fps=False)
             print(f"[Air Writer] Virtual Camera Active: {vcam.device}")
-            print("             -> Select 'OBS Virtual Camera' in Discord / Instagram / WhatsApp / Zoom")
-            print("             -> Press 'm' or toggle VCAM in menu to flip orientation for selfie apps")
         except Exception as exc:
             print(f"[Air Writer] Virtual Camera note: {exc}")
-            print("             To activate virtual camera on macOS, install OBS Studio once.")
     else:
         print("[Air Writer] 'pyvirtualcam' not installed. Previewing in local window mode.")
 
@@ -1485,7 +1609,7 @@ def main():
     thumb_filter = PointFilter2D(PEN_MIN_CUTOFF, PEN_BETA, PEN_D_CUTOFF)
     cursor_filter = PointFilter2D(CURSOR_MIN_CUTOFF, CURSOR_BETA, CURSOR_D_CUTOFF)
 
-    dominant_hand = "Right"  # Strict default drawing hand ('Right' or 'Left')
+    dominant_hand = "Right"
     vcam_flipped = False
 
     palm_open_seen = False
@@ -1497,25 +1621,24 @@ def main():
     menu_open_since: Optional[float] = None
     menu_fist_since: Optional[float] = None
 
-    window_title = "Air Writer - Pro AR Canvas"
+    window_title = "Air Writer - Pro Max AR Canvas"
     cv2.namedWindow(window_title, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(window_title, CANVAS_WIDTH, CANVAS_HEIGHT)
 
     save_dir = os.path.join(os.path.expanduser("~"), "Desktop", "AirWriterSaves")
     print(f"[Air Writer] Snapshots save path: {save_dir}")
     print("[Air Writer] System Ready. Press 'q' or ESC to exit.")
-    print("[Air Writer] Hand Roles: STRICTLY LOCKED. Press 'h' to swap Drawing / Manager hand.")
-    print("[Air Writer] Gestures: Peace=Undo | ThumbsUp=Redo | Horns=Color | 3Finger=Canvas | Fist=Erase")
-    print("[Air Writer] Hotkeys:  [c]lear | [z]undo | [y]redo | [h]and | [p]mode | [k]tool | [b]bg | [m]irror | [s]ave")
+    print("[Air Writer] Tools: [k]pen tool | [e]raser mode | [o]single-hand mode | [b]canvas mode")
+    print("[Air Writer] Controls: [c]lear | [z]undo | [y]redo | [h]hand | [p]draw mode | [m]irror | [s]ave")
 
     prev_frame_t = time.perf_counter()
     fps_estimate = 30.0
 
     try:
         while True:
-            t_now = time.perf_counter()
-            dt = t_now - prev_frame_t
-            prev_frame_t = t_now
+            t_loop_start = time.perf_counter()
+            dt = t_loop_start - prev_frame_t
+            prev_frame_t = t_loop_start
             if dt > 0.001:
                 fps_estimate = 0.92 * fps_estimate + 0.08 * (1.0 / dt)
 
@@ -1529,13 +1652,17 @@ def main():
                 mirrored = cv2.resize(mirrored, (CANVAS_WIDTH, CANVAS_HEIGHT), interpolation=cv2.INTER_LINEAR)
 
             rgb = cv2.cvtColor(mirrored, cv2.COLOR_BGR2RGB)
-            phys_left, phys_right = hand_tracker.process_frame(rgb, CANVAS_WIDTH, CANVAS_HEIGHT, t_now)
+            phys_left, phys_right = hand_tracker.process_frame(rgb, CANVAS_WIDTH, CANVAS_HEIGHT, t_loop_start)
 
-            # STRICT HAND ROLE BINDING (NO AUTOMATIC SWAPPING)
-            if dominant_hand == "Right":
-                drawing_hand, manager_hand = phys_right, phys_left
+            # Hand Role Locking vs Single-Handed Mode Logic
+            if pen_engine.single_hand_mode:
+                active_present_hand = phys_right if (phys_right and phys_right.is_present) else phys_left
+                drawing_hand, manager_hand = active_present_hand, None
             else:
-                drawing_hand, manager_hand = phys_left, phys_right
+                if dominant_hand == "Right":
+                    drawing_hand, manager_hand = phys_right, phys_left
+                else:
+                    drawing_hand, manager_hand = phys_left, phys_right
 
             menu.layout(CANVAS_WIDTH, CANVAS_HEIGHT)
 
@@ -1552,77 +1679,77 @@ def main():
 
                 if open_palm:
                     if menu_open_since is None:
-                        menu_open_since = t_now
-                    elif t_now - menu_open_since >= MENU_OPEN_HOLD:
+                        menu_open_since = t_loop_start
+                    elif t_loop_start - menu_open_since >= MENU_OPEN_HOLD:
                         off_x = 60 if dominant_hand == "Right" else -300
-                        menu.open_at(manager_hand.wrist_px[0] + off_x, manager_hand.wrist_px[1] - 140, t_now)
+                        menu.open_at(manager_hand.wrist_px[0] + off_x, manager_hand.wrist_px[1] - 140, t_loop_start)
                 else:
                     menu_open_since = None
 
                 if menu.is_visible and fist:
                     if menu_fist_since is None:
-                        menu_fist_since = t_now
-                    elif t_now - menu_fist_since >= MENU_CLOSE_HOLD:
+                        menu_fist_since = t_loop_start
+                    elif t_loop_start - menu_fist_since >= MENU_CLOSE_HOLD:
                         menu.close()
                         menu_fist_since = None
                 else:
                     menu_fist_since = None
 
                 if menu.is_visible:
-                    manager_cursor = cursor_filter.update(manager_hand.index_tip_px, t_now)
+                    manager_cursor = cursor_filter.update(manager_hand.index_tip_px, t_loop_start)
                     can_point = (not open_palm) and (manager_hand.index_ratio > 0.5 or manager_hand.pinch_ratio < PINCH_EXIT)
                     if can_point:
-                        sel_type, sel_val = menu.interact(manager_cursor, manager_hand.pinch_ratio, t_now)
+                        sel_type, sel_val = menu.interact(manager_cursor, manager_hand.pinch_ratio, t_loop_start)
                     else:
                         menu.cancel_dwell()
                         sel_type, sel_val = None, None
 
                     if sel_type == "color":
                         board.set_color_index(sel_val)
-                        effects.show_toast(f"Color: {PALETTE_COLORS[sel_val]['name']}", t_now)
+                        effects.show_toast(f"Color: {PALETTE_COLORS[sel_val]['name']}", t_loop_start)
                     elif sel_type == "width":
                         board.set_width_index(sel_val)
-                        effects.show_toast(f"Stroke: {STROKE_WIDTHS[sel_val]['label']}", t_now)
+                        effects.show_toast(f"Stroke: {STROKE_WIDTHS[sel_val]['label']}", t_loop_start)
                     elif sel_type == "toggle_tool_mode":
-                        new_tool = pen_engine.cycle_tool_mode()
-                        effects.show_toast(f"Tool Mode: {new_tool.upper()}", t_now)
+                        tname = pen_engine.cycle_pen_tool()
+                        effects.show_toast(f"Tool: {tname}", t_loop_start)
                         menu.cancel_dwell()
                     elif sel_type == "toggle_canvas_mode":
                         cname = board.cycle_canvas_mode()
-                        effects.show_toast(f"Canvas: {cname}", t_now)
+                        effects.show_toast(f"Canvas: {cname}", t_loop_start)
                         menu.cancel_dwell()
                     elif sel_type == "toggle_hand":
                         dominant_hand = "Left" if dominant_hand == "Right" else "Right"
                         board.pen_up()
                         pen_engine.reset()
-                        effects.show_toast(f"Drawing Hand: {dominant_hand.upper()} (LOCKED)", t_now)
+                        effects.show_toast(f"Drawing Hand: {dominant_hand.upper()}", t_loop_start)
                         menu.cancel_dwell()
                     elif sel_type == "toggle_draw_mode":
                         new_mode = pen_engine.cycle_draw_mode()
-                        effects.show_toast(f"Draw Mode: {new_mode.upper()}", t_now)
+                        effects.show_toast(f"Draw Mode: {new_mode.upper()}", t_loop_start)
                         menu.cancel_dwell()
                     elif sel_type == "toggle_shape_snap":
                         snap = board.toggle_shape_snap()
-                        effects.show_toast(f"Shape Snap: {'ON' if snap else 'OFF'}", t_now)
+                        effects.show_toast(f"Shape Snap: {'ON' if snap else 'OFF'}", t_loop_start)
                         menu.cancel_dwell()
                     elif sel_type == "cycle_hold":
                         menu.cycle_hold_duration()
-                        effects.show_toast(f"Menu Hold: {MENU_HOLD_OPTIONS[menu.hold_option_idx]['label']}", t_now)
+                        effects.show_toast(f"Menu Hold: {MENU_HOLD_OPTIONS[menu.hold_option_idx]['label']}", t_loop_start)
                     elif sel_type == "undo":
                         if board.undo():
-                            effects.show_toast("Undo Stroke", t_now)
+                            effects.show_toast("Undo Stroke", t_loop_start)
                         menu.cancel_dwell()
                     elif sel_type == "clear":
                         board.clear()
-                        effects.trigger_clear_ripple(manager_cursor, t_now)
-                        effects.show_toast("Canvas Cleared", t_now)
+                        effects.trigger_clear_ripple(manager_cursor, t_loop_start)
+                        effects.show_toast("Canvas Cleared", t_loop_start)
             else:
                 cursor_filter.reset()
                 menu_open_since = None
                 menu_fist_since = None
                 menu.cancel_dwell()
 
-            menu.update(t_now)
+            menu.update(t_loop_start)
 
             # ---------------------------------------------------------
             # DRAWING HAND PROCESSING
@@ -1638,71 +1765,76 @@ def main():
 
                 if raw_palm_open:
                     palm_open_seen = True
-                    palm_open_time = t_now
+                    palm_open_time = t_loop_start
                     palm_hint_pos = ipt(drawing_hand.wrist_px)
                 elif palm_open_seen and all_curled:
-                    if (t_now - palm_open_time) <= 1.2 and (t_now - clear_cooldown_t) > 1.2:
+                    if (t_loop_start - palm_open_time) <= 1.2 and (t_loop_start - clear_cooldown_t) > 1.2:
                         board.clear()
-                        effects.trigger_clear_ripple(drawing_hand.wrist_px, t_now)
-                        effects.show_toast("Canvas Cleared", t_now)
-                        clear_cooldown_t = t_now
-                        suppress_until = t_now + 0.6
+                        effects.trigger_clear_ripple(drawing_hand.wrist_px, t_loop_start)
+                        effects.show_toast("Canvas Cleared", t_loop_start)
+                        clear_cooldown_t = t_loop_start
+                        suppress_until = t_loop_start + 0.6
                         palm_open_seen = False
                         pen_engine.reset()
 
-                if t_now - palm_open_time > 1.2:
+                if t_loop_start - palm_open_time > 1.2:
                     palm_open_seen = False
 
-                suppress = raw_palm_open or (t_now < suppress_until)
-                is_drawing, is_erasing, is_laser, gesture_action, active_tip = pen_engine.update(drawing_hand, t_now, suppress)
+                suppress = raw_palm_open or (t_loop_start < suppress_until)
+                is_drawing, is_erasing, is_laser, gesture_action, active_tip = pen_engine.update(drawing_hand, t_loop_start, suppress)
 
-                # Process Gesture Actions
+                # Gesture Actions
                 if gesture_action == "undo":
                     if board.undo():
-                        effects.show_toast("Gesture Undo", t_now)
+                        effects.show_toast("Gesture Undo", t_loop_start)
                 elif gesture_action == "redo":
                     if board.redo():
-                        effects.show_toast("Gesture Redo", t_now)
+                        effects.show_toast("Gesture Redo", t_loop_start)
                 elif gesture_action == "cycle_color":
                     cname = board.cycle_color()
-                    effects.show_toast(f"Gesture Color: {cname}", t_now)
+                    effects.show_toast(f"Gesture Color: {cname}", t_loop_start)
                 elif gesture_action == "cycle_canvas":
                     cname = board.cycle_canvas_mode()
-                    effects.show_toast(f"Gesture Canvas: {cname}", t_now)
+                    effects.show_toast(f"Gesture Canvas: {cname}", t_loop_start)
 
-                smooth_tip = pen_filter.update(active_tip, t_now)
-                smooth_thumb = thumb_filter.update(drawing_hand.thumb_tip_px, t_now)
+                smooth_tip = pen_filter.update(active_tip, t_loop_start)
+                smooth_thumb = thumb_filter.update(drawing_hand.thumb_tip_px, t_loop_start)
 
                 if is_drawing and menu.contains(smooth_tip, margin=10):
                     is_drawing = False
 
-                is_highlighter = (pen_engine.tool_mode == "highlighter")
+                current_tool = pen_engine.current_tool_code
 
                 if is_drawing:
                     board.eraser_up()
                     effects.clear_laser()
                     if not was_drawing and prev_smooth_tip is not None:
-                        board.stroke_point(prev_smooth_tip, is_highlighter, t_now)
+                        board.stroke_point(prev_smooth_tip, current_tool, t_loop_start)
 
-                    snapped_shape = board.stroke_point(smooth_tip, is_highlighter, t_now)
+                    snapped_shape = board.stroke_point(smooth_tip, current_tool, t_loop_start)
                     if snapped_shape:
-                        effects.show_toast(f"Snapped: {snapped_shape.upper()}", t_now)
+                        effects.show_toast(f"Snapped: {snapped_shape.upper()}", t_loop_start)
 
                     cursor_info = {"type": "draw", "pt": smooth_tip,
                                    "color": board.current_bgr, "thickness": board.current_thickness,
-                                   "highlighter": is_highlighter}
+                                   "tool": current_tool}
                 elif is_erasing:
-                    board.pen_up(is_highlighter)
+                    board.pen_up(current_tool)
                     effects.clear_laser()
-                    board.erase_at(smooth_thumb, ERASER_RADIUS)
+                    if pen_engine.eraser_mode_idx == 1:
+                        if board.stroke_erase_at(smooth_thumb, ERASER_RADIUS):
+                            effects.show_toast("Stroke Erased", t_loop_start)
+                    else:
+                        board.erase_at_point(smooth_thumb, ERASER_RADIUS)
+
                     cursor_info = {"type": "erase", "pt": smooth_thumb, "radius": ERASER_RADIUS}
                 elif is_laser:
-                    board.pen_up(is_highlighter)
+                    board.pen_up(current_tool)
                     board.eraser_up()
                     effects.add_laser_point(smooth_tip)
                     cursor_info = {"type": "laser", "pt": smooth_tip}
                 else:
-                    board.pen_up(is_highlighter)
+                    board.pen_up(current_tool)
                     board.eraser_up()
                     effects.clear_laser()
                     if (drawing_hand.index_ratio > 0.58 or drawing_hand.pinch_ratio < 0.45) and not suppress:
@@ -1712,7 +1844,7 @@ def main():
                 was_drawing = is_drawing
                 prev_smooth_tip = smooth_tip
             else:
-                board.pen_up(pen_engine.tool_mode == "highlighter")
+                board.pen_up(pen_engine.current_tool_code)
                 board.eraser_up()
                 effects.clear_laser()
                 pen_engine.reset()
@@ -1725,7 +1857,7 @@ def main():
             # ---------------------------------------------------------
             # CANVAS COMPOSITING & VIRTUAL CAMERA
             # ---------------------------------------------------------
-            clean = board.composite_with_camera(mirrored, is_highlighter=(pen_engine.tool_mode == "highlighter"))
+            clean = board.composite_with_camera(mirrored)
 
             if vcam is not None:
                 try:
@@ -1735,7 +1867,7 @@ def main():
                     vcam = None
 
             # ---------------------------------------------------------
-            # PREVIEW OVERLAYS, WRIST BADGES & STATUS
+            # PREVIEW OVERLAYS, WRIST BADGES & PRO PROFILER HUD
             # ---------------------------------------------------------
             display = clean.copy()
 
@@ -1744,7 +1876,6 @@ def main():
                 cv2.putText(display, "CLOSE FIST TO CLEAR", (palm_hint_pos[0] - 80, palm_hint_pos[1] + 66),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.46, (100, 220, 255), 1, cv2.LINE_AA)
 
-            # Draw Wrist Badges and Strict Hand Role Identifiers
             if phys_right is not None and phys_right.is_present:
                 wx, wy = ipt(phys_right.wrist_px)
                 is_draw = (drawing_hand == phys_right)
@@ -1766,8 +1897,7 @@ def main():
                 kind = cursor_info["type"]
                 if kind == "draw":
                     r = max(cursor_info["thickness"] // 2, 4)
-                    c = (255, 255, 255) if not cursor_info.get("highlighter") else (200, 240, 255)
-                    cv2.circle(display, pt, r + 5, c, 2, cv2.LINE_AA)
+                    cv2.circle(display, pt, r + 5, (255, 255, 255), 2, cv2.LINE_AA)
                     cv2.circle(display, pt, r, cursor_info["color"], -1, cv2.LINE_AA)
                 elif kind == "hover":
                     r = max(cursor_info["thickness"] // 2, 4)
@@ -1781,18 +1911,18 @@ def main():
                     cv2.circle(display, pt, 11, (100, 150, 255), 2, cv2.LINE_AA)
 
             menu.render(display, board.color_idx, board.width_idx, dominant_hand,
-                        pen_engine.draw_mode, pen_engine.tool_mode,
-                        CANVAS_MODES[board.canvas_mode_idx]["name"], board.shape_snap_enabled, t_now)
+                        pen_engine.draw_mode, pen_engine.current_tool_name,
+                        CANVAS_MODES[board.canvas_mode_idx]["name"], board.shape_snap_enabled, t_loop_start)
 
             if manager_cursor is not None and menu.is_visible:
                 mc = ipt(manager_cursor)
                 cv2.circle(display, mc, 8, (255, 255, 255), 2, cv2.LINE_AA)
                 cv2.circle(display, mc, 4, (200, 120, 255), -1, cv2.LINE_AA)
 
-            effects.render(display, t_now)
+            effects.render(display, t_loop_start)
 
             # Top Floating Status HUD Capsule
-            pill_w, pill_h = 720, 32
+            pill_w, pill_h = 760, 32
             pill_x = (CANVAS_WIDTH - pill_w) // 2
             pill_y = 12
             pill_roi = display[pill_y:pill_y + pill_h, pill_x:pill_x + pill_w]
@@ -1803,12 +1933,14 @@ def main():
 
             vcam_str = f"VCAM: {'FLIPPED' if vcam_flipped else 'NORMAL'}" if vcam is not None else "LOCAL"
             snap_str = "SNAP" if board.shape_snap_enabled else "NOSNAP"
+            single_str = "1-HAND" if pen_engine.single_hand_mode else "2-HAND"
             status_text = (f"{PALETTE_COLORS[board.color_idx]['name']} | "
                            f"{STROKE_WIDTHS[board.width_idx]['label']} | "
-                           f"Tool: {pen_engine.tool_mode.upper()} | "
-                           f"Draw: {dominant_hand.upper()} [LOCKED] | "
-                           f"Canvas: {CANVAS_MODES[board.canvas_mode_idx]['name']} [{snap_str}] | "
-                           f"{vcam_str} | {int(fps_estimate)} FPS")
+                           f"Tool: {pen_engine.current_tool_name} | "
+                           f"Eraser: {pen_engine.current_eraser_mode_name[:5]} | "
+                           f"Mode: {single_str} | "
+                           f"{CANVAS_MODES[board.canvas_mode_idx]['name']} [{snap_str}] | "
+                           f"{int(fps_estimate)} FPS")
             cv2.putText(display, status_text, (pill_x + 36, pill_y + 21),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.40, (230, 230, 240), 1, cv2.LINE_AA)
 
@@ -1822,42 +1954,45 @@ def main():
                 break
             elif key == ord("c"):
                 board.clear()
-                effects.show_toast("Canvas Cleared", t_now)
+                effects.show_toast("Canvas Cleared", t_loop_start)
             elif key == ord("z"):
                 if board.undo():
-                    effects.show_toast("Undo Stroke", t_now)
+                    effects.show_toast("Undo Stroke", t_loop_start)
             elif key == ord("y"):
                 if board.redo():
-                    effects.show_toast("Redo Stroke", t_now)
+                    effects.show_toast("Redo Stroke", t_loop_start)
             elif key == ord("h"):
                 dominant_hand = "Left" if dominant_hand == "Right" else "Right"
                 board.pen_up()
                 pen_engine.reset()
-                effects.show_toast(f"Drawing Hand: {dominant_hand.upper()} (LOCKED)", t_now)
+                effects.show_toast(f"Drawing Hand: {dominant_hand.upper()}", t_loop_start)
             elif key == ord("p"):
                 new_mode = pen_engine.cycle_draw_mode()
-                effects.show_toast(f"Draw Mode: {new_mode.upper()}", t_now)
+                effects.show_toast(f"Draw Mode: {new_mode.upper()}", t_loop_start)
             elif key == ord("k"):
-                new_tool = pen_engine.cycle_tool_mode()
-                effects.show_toast(f"Tool Mode: {new_tool.upper()}", t_now)
+                tname = pen_engine.cycle_pen_tool()
+                effects.show_toast(f"Pen Tool: {tname}", t_loop_start)
+            elif key == ord("e"):
+                ename = pen_engine.toggle_eraser_mode()
+                effects.show_toast(f"Eraser: {ename}", t_loop_start)
+            elif key == ord("o"):
+                smode = pen_engine.toggle_single_hand_mode()
+                effects.show_toast(f"Mode: {'SINGLE-HANDED' if smode else 'DUAL-HANDED'}", t_loop_start)
             elif key == ord("b"):
                 cname = board.cycle_canvas_mode()
-                effects.show_toast(f"Canvas: {cname}", t_now)
+                effects.show_toast(f"Canvas: {cname}", t_loop_start)
             elif key == ord("g"):
                 snap = board.toggle_shape_snap()
-                effects.show_toast(f"Shape Snap: {'ON' if snap else 'OFF'}", t_now)
+                effects.show_toast(f"Shape Snap: {'ON' if snap else 'OFF'}", t_loop_start)
             elif key == ord("m"):
                 vcam_flipped = not vcam_flipped
-                effects.show_toast("VCAM Mirror: " + ("Flipped (Discord/Insta/WhatsApp)" if vcam_flipped else "Normal (Zoom/Meet)"), t_now)
+                effects.show_toast("VCAM Mirror: " + ("Flipped (Discord/Insta/WhatsApp)" if vcam_flipped else "Normal (Zoom/Meet)"), t_loop_start)
             elif key == ord("t"):
                 menu.cycle_hold_duration()
-                effects.show_toast(f"Menu Hold: {MENU_HOLD_OPTIONS[menu.hold_option_idx]['label']}", t_now)
+                effects.show_toast(f"Menu Hold: {MENU_HOLD_OPTIONS[menu.hold_option_idx]['label']}", t_loop_start)
             elif key == ord("s"):
-                os.makedirs(save_dir, exist_ok=True)
-                path = os.path.join(save_dir, f"air_writer_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
-                cv2.imwrite(path, clean)
-                effects.show_toast("Saved to Desktop", t_now)
-                print(f"[Air Writer] Snapshot saved: {path}")
+                export_snapshot_suite(save_dir, clean, board)
+                effects.show_toast("Snapshot Suite Saved to Desktop", t_loop_start)
 
     finally:
         print("[Air Writer] Shutting down cleanly...")
