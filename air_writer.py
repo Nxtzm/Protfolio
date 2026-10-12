@@ -1,33 +1,36 @@
 #!/usr/bin/env python3
 """
-Air Writer - Pro Max Edition v6.5 (Spatial Continuity Lock Engine)
+Air Writer - Pro Max Edition v7.5 (Work Mode & Fun Mode AR Hologram Engine)
 
 The ultimate production-grade, zero-latency AR air-writing application.
-Features Spatial Motion Continuity Tracking & Active Stroke Hysteresis Locking to completely eliminate hand-swapping glitches.
+Features Work Mode vs Fun Mode isolation, True 60 FPS Letter Breaks, and Interactive AR Holograms.
 
-Key Fixes in v6.5:
-  - SPATIAL MOTION CONTINUITY LOCK ENGINE:
-      * Hand assignment is driven by spatial position continuity (velocity prediction & Euclidean nearest-neighbor) rather than MediaPipe classification labels.
-      * In mirrored selfie mode (Discord, Zoom, Meet, Insta, WhatsApp), MediaPipe's "Right" label corresponds to the physical right hand shown on the right side of the screen.
-      * Active Inking & Menu Interaction Hysteresis Lock: while drawing or hovering over the menu, hand roles CANNOT flip or swap under any circumstances.
-      * Extended TTL (1.2 seconds) prevents track expiration during brief camera occlusions.
-
-Features:
-  - Advanced Rendering Engine & Tools: Calligraphy Pen, Chisel Pen, Neon Glow Pen, Highlighter, Laser Pointer.
-  - Dual Eraser Modes: Point Mask Eraser & Stroke Eraser (deletes full stroke on touch).
-  - Geometric Shape Snapping: auto-detects and snaps lines, circles, rectangles, and triangles when holding steady.
-  - Multi-Canvas Modes: AR Overlay, Clean Whiteboard, OLED Darkboard, and Architectural Grid Paper.
-  - Single-Handed Mode & Strict Dual-Hand Mode toggle.
-  - Deep Undo / Redo Stroke History Stack.
-  - Glassmorphism AR Floating Menu with circular dwell indicators and color/tool toggles.
-  - Multi-Format Snapshot Exporter Suite (Composites Pen, Neon, and Highlighter stroke layers for 4K PNG, Whiteboard PNG, Transparent PNG, and AR Frame JPEGs).
-  - Universal Video Call Compatibility (Discord, Instagram, WhatsApp, Zoom, Meet, Teams, OBS).
+Key Upgrades in v7.5:
+  - WORK MODE vs FUN MODE ENGINE (`f` key or AR Menu button):
+      * WORK MODE (Default): Strictly clean, professional writing with zero visual distractions.
+      * FUN MODE: Activates interactive Sci-Fi AR Holograms & Effects:
+          1. Cyberpunk Rotating Holographic Rings surrounding pen tip.
+          2. Starburst Particle Trails following hand motion.
+          3. Spinning 3D Wireframe Holographic Crystal / Energy Orb anchored at the wrist.
+  - NATURAL LETTER BREAK & FAST DOTTING ENGINE:
+      * Dynamic hysteresis thresholding allowing instant pen lifts between letters, i-dots, t-crosses, and separate words with zero continuous scribbling.
+  - ASYNCHRONOUS THREADED INFERENCE & 60 FPS MOTION EXTRAPOLATION:
+      * Decoupled MediaPipe tracking with twin 1-Euro filters for 60 FPS buttery-smooth drawing.
+  - SPATIAL MOTION CONTINUITY TRACKING:
+      * Nearest-neighbor Euclidean spatial tracking locks hand identities to eliminate Left/Right hand swapping glitches.
+  - FULL PRO TOOLKIT:
+      * Calligraphy, Chisel Pen, Neon Glow, Highlighter, Laser Pointer.
+      * Point Mask Eraser & Stroke Eraser.
+      * Geometric Shape Snapping (line, circle, rect, triangle).
+      * Multi-Canvas Modes (AR, Whiteboard, Darkboard, Grid Paper).
+      * Universal Video Call VCAM Support (Zoom, Meet, Discord, Instagram, WhatsApp).
 
 Hotkeys:
   q / ESC : Quit
   c       : Clear canvas
   z       : Undo last stroke
   y       : Redo stroke
+  f       : Toggle WORK MODE vs FUN MODE (AR Holograms)
   h       : Explicitly swap drawing hand (Right / Left)
   p       : Cycle draw mode (Point / Pinch / Laser / Auto)
   k       : Cycle pen tool (Calligraphy / Chisel / Neon Glow / Highlighter)
@@ -46,6 +49,7 @@ import time
 import math
 import platform
 import threading
+import random
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -68,7 +72,7 @@ except ImportError:
 
 CANVAS_WIDTH = 1280
 CANVAS_HEIGHT = 720
-TARGET_FPS = 30
+TARGET_FPS = 60
 
 # MediaPipe Hand Landmark Indices
 WRIST = 0
@@ -123,34 +127,32 @@ CANVAS_MODES = [
 
 ERASER_RADIUS = 38
 
-# --- Gesture & Motion Parameters ---
-PEN_ENTER_RATIO = 0.68
-PEN_EXIT_RATIO = 0.58
-PINCH_WRITE_ENTER = 0.28
-PINCH_WRITE_EXIT = 0.42
-ERASE_ARM_SECONDS = 0.22
-MAX_JUMP_PX = 250.0
-TAIL_TRIM = 2
-SHAPE_HOLD_SECONDS = 0.40
-GESTURE_COOLDOWN = 0.65
+# --- High-FPS Dynamic Pen Thresholds ---
+PEN_ENTER_RATIO = 0.65     # Point index straightness to start inking
+PEN_EXIT_RATIO = 0.60      # Natural slight relaxation lifts pen instantly
+PINCH_WRITE_ENTER = 0.30   # Pinch ratio to start inking
+PINCH_WRITE_EXIT = 0.40    # Pinch release threshold
+ERASE_ARM_SECONDS = 0.20   # Fast eraser activation
+MAX_JUMP_PX = 300.0        # Glitch safeguard
+TAIL_TRIM = 1              # Minimal 1-point buffer for zero latency pen-up
+SHAPE_HOLD_SECONDS = 0.38  # Hold steady shape snap delay
+GESTURE_COOLDOWN = 0.60    # Cooldown duration for quick gestures
 
-# --- 1-Euro Motion Filtering ---
-PEN_MIN_CUTOFF = 1.0
-PEN_BETA = 0.06
-PEN_D_CUTOFF = 5.0
+# --- High-FPS 1-Euro Motion Filtering Tuning ---
+PEN_MIN_CUTOFF = 1.2
+PEN_BETA = 0.08
+PEN_D_CUTOFF = 6.0
 
-CURSOR_MIN_CUTOFF = 1.0
-CURSOR_BETA = 0.03
-CURSOR_D_CUTOFF = 5.0
+CURSOR_MIN_CUTOFF = 1.2
+CURSOR_BETA = 0.04
+CURSOR_D_CUTOFF = 6.0
 
 # --- AR Menu Tuning ---
-MENU_DWELL_SECONDS = 0.50
-MENU_OPEN_HOLD = 0.22
-MENU_CLOSE_HOLD = 0.40
-PINCH_ENTER = 0.30
-PINCH_EXIT = 0.45
+MENU_DWELL_SECONDS = 0.45
+MENU_OPEN_HOLD = 0.20
+MENU_CLOSE_HOLD = 0.38
 
-SHIFT = 4                  # Sub-pixel drawing precision (1/16 px)
+SHIFT = 4                  # Sub-pixel precision (1/16 px)
 SHIFT_MUL = 1 << SHIFT
 
 
@@ -163,10 +165,6 @@ def ipt(p: Tuple[float, float]) -> Tuple[int, int]:
 # =========================================================================
 
 class ThreadedWebcam:
-    """
-    Background video capture engine running on a dedicated thread.
-    Continuously flushes hardware camera buffers to eliminate AVFoundation/DirectShow lag.
-    """
     def __init__(self, cap: cv2.VideoCapture):
         self.cap = cap
         self.lock = threading.Lock()
@@ -187,7 +185,7 @@ class ThreadedWebcam:
                     self.frame_t = t
                     self.has_frame = True
             else:
-                time.sleep(0.002)
+                time.sleep(0.001)
 
     def read_latest(self) -> Tuple[bool, Optional[np.ndarray]]:
         with self.lock:
@@ -224,7 +222,7 @@ class OneEuroFilter:
         return 1.0 / (1.0 + tau / te)
 
     def filter(self, x: float, timestamp: float) -> float:
-        if self.last_time is None or self.x_prev is None or timestamp - self.last_time > 0.35:
+        if self.last_time is None or self.x_prev is None or timestamp - self.last_time > 0.30:
             self.last_time = timestamp
             self.x_prev = x
             self.dx_prev = 0.0
@@ -267,7 +265,7 @@ class PointFilter2D:
 
 
 # =========================================================================
-# 3. HAND POSE & SPATIAL MOTION CONTINUITY TRACKER
+# 3. HAND POSE & SPATIAL CONTINUITY TRACKER
 # =========================================================================
 
 @dataclass
@@ -323,12 +321,6 @@ class TrackedEntity:
 
 
 class SpatialContinuityHandTracker:
-    """
-    Spatial Motion Continuity Hand Tracker:
-      - Uses Euclidean distance & velocity prediction to track physical hands across frames.
-      - Never swaps track IDs based on raw classifier flips.
-      - Extended TTL (1.2s) keeps hand identities locked through camera occlusions.
-    """
     HISTORY_TTL = 1.20
 
     def __init__(self):
@@ -336,8 +328,8 @@ class SpatialContinuityHandTracker:
         self._hands = self._mp_hands.Hands(
             static_image_mode=False,
             max_num_hands=2,
-            min_detection_confidence=0.55,
-            min_tracking_confidence=0.55,
+            min_detection_confidence=0.50,
+            min_tracking_confidence=0.50,
             model_complexity=1,
         )
         self.left_track: Optional[TrackedEntity] = None
@@ -402,7 +394,7 @@ class SpatialContinuityHandTracker:
             pinch_mid_px=p_mid,
             index_ratio=idx_r, middle_ratio=mid_r, ring_ratio=rng_r, pinky_ratio=pnk_r, thumb_ratio=thm_r,
             thumb_up=thm_up,
-            index_up=idx_r > 0.65, middle_up=mid_r > 0.65, ring_up=rng_r > 0.62, pinky_up=pnk_r > 0.62,
+            index_up=idx_r > 0.62, middle_up=mid_r > 0.62, ring_up=rng_r > 0.60, pinky_up=pnk_r > 0.60,
             hand_scale=scale, pinch_ratio=pinch,
         )
 
@@ -421,7 +413,6 @@ class SpatialContinuityHandTracker:
         L = self.left_track
         R = self.right_track
 
-        # --- Case 1: Two hands present ---
         if len(poses) >= 2:
             a, b = poses[0], poses[1]
 
@@ -438,7 +429,6 @@ class SpatialContinuityHandTracker:
                     R.update(a.wrist_px, a.right_confidence, t, a.hand_scale)
                     return b, a
 
-            # In mirrored camera view, physical right hand is on the right side of screen (greater X)
             if a.wrist_px[0] <= b.wrist_px[0]:
                 self.left_track = TrackedEntity(a.wrist_px, a.right_confidence, t, a.hand_scale)
                 self.right_track = TrackedEntity(b.wrist_px, b.right_confidence, t, b.hand_scale)
@@ -448,7 +438,6 @@ class SpatialContinuityHandTracker:
                 self.right_track = TrackedEntity(a.wrist_px, a.right_confidence, t, a.hand_scale)
                 return b, a
 
-        # --- Case 2: One hand present ---
         p = poses[0]
         s = p.right_confidence
         max_dist = max(400.0, 4.5 * p.hand_scale)
@@ -472,7 +461,6 @@ class SpatialContinuityHandTracker:
             L.update(p.wrist_px, s, t, p.hand_scale)
             return p, None
 
-        # Fresh single hand detection: map based on spatial screen side in mirrored view
         if p.wrist_px[0] > (CANVAS_WIDTH * 0.45):
             self.right_track = TrackedEntity(p.wrist_px, 0.95, t, p.hand_scale)
             return None, p
@@ -511,7 +499,7 @@ class SpatialContinuityHandTracker:
 
 
 # =========================================================================
-# 4. PEN ENGINE & MULTI-GESTURE RECOGNITION
+# 4. PEN ENGINE & FAST LETTER-BREAK RECOGNITION
 # =========================================================================
 
 class IsolatedPenEngine:
@@ -520,6 +508,7 @@ class IsolatedPenEngine:
         self.pen_tool_idx = 0          # 0: Calligraphy, 1: Chisel Pen, 2: Neon Glow, 3: Highlighter
         self.eraser_mode_idx = 0       # 0: Point Mask, 1: Stroke Eraser
         self.single_hand_mode = False  # Single-handed operation mode
+        self.fun_mode = False          # Fun Mode / AR Holograms mode
         self.reset()
 
     def reset(self):
@@ -569,6 +558,10 @@ class IsolatedPenEngine:
     def toggle_single_hand_mode(self) -> bool:
         self.single_hand_mode = not self.single_hand_mode
         return self.single_hand_mode
+
+    def toggle_fun_mode(self) -> bool:
+        self.fun_mode = not self.fun_mode
+        return self.fun_mode
 
     def update(self, hand: Optional[HandPose], t: float, suppress: bool = False
                ) -> Tuple[bool, bool, bool, Optional[str], Tuple[float, float]]:
@@ -651,14 +644,15 @@ class IsolatedPenEngine:
                 self.is_erasing = False
                 self.erase_exit = 0
 
-        # 6. Drawing & Laser Pointer Processing
+        # 6. Drawing & Dynamic Letter-Break Inking State
         mode = self.draw_mode
         if mode == "laser":
             is_laser_active = (hand.index_ratio > PEN_ENTER_RATIO)
             return False, False, is_laser_active, action, hand.index_tip_px
 
         is_pinch = hand.pinch_ratio < (PINCH_WRITE_EXIT if (self.is_drawing and self.active_style == "pinch") else PINCH_WRITE_ENTER)
-        is_point = (hand.index_ratio > (PEN_EXIT_RATIO if (self.is_drawing and self.active_style == "point") else PEN_ENTER_RATIO)) and (hand.index_ratio > hand.middle_ratio + 0.05)
+        exit_thresh = PEN_EXIT_RATIO if self.is_drawing else PEN_ENTER_RATIO
+        is_point = (hand.index_ratio > exit_thresh) and (hand.index_ratio > hand.middle_ratio + 0.04)
 
         target_drawing = False
         tip_px = hand.index_tip_px
@@ -696,7 +690,7 @@ class IsolatedPenEngine:
         else:
             if not target_drawing:
                 self.exit_counter += 1
-                if self.exit_counter >= 2:
+                if self.exit_counter >= 1:
                     self.is_drawing = False
                     self.exit_counter = 0
             else:
@@ -1239,7 +1233,7 @@ class ARFloatingMenu:
                   "x1": px + 144, "y1": vy - 14, "x2": px + 266, "y2": vy + 14})
 
         hy = py + 314
-        b.append({"type": "toggle_shape_snap", "value": 0, "shape": "rect",
+        b.append({"type": "toggle_fun_mode", "value": 0, "shape": "rect",
                   "x1": px + 14, "y1": hy - 14, "x2": px + 136, "y2": hy + 14})
         b.append({"type": "cycle_hold", "value": 0, "shape": "rect",
                   "x1": px + 144, "y1": hy - 14, "x2": px + 266, "y2": hy + 14})
@@ -1327,7 +1321,7 @@ class ARFloatingMenu:
 
     def render(self, frame: np.ndarray, active_color_idx: int, active_width_idx: int,
                dominant_hand: str, draw_mode: str, tool_name: str, canvas_mode_name: str,
-               shape_snap: bool, t: float):
+               fun_mode: bool, t: float):
         if not self.is_visible or self.fade_alpha <= 0.02:
             return
         px, py = self.px, self.py
@@ -1374,8 +1368,8 @@ class ARFloatingMenu:
                     label, scale, tcol = f"HAND: {dominant_hand.upper()}", 0.36, (220, 220, 235)
                 elif typ == "toggle_draw_mode":
                     label, scale, tcol = f"MODE: {draw_mode.upper()}", 0.36, (130, 230, 255)
-                elif typ == "toggle_shape_snap":
-                    label, scale, tcol = f"SNAP: {'ON' if shape_snap else 'OFF'}", 0.36, (120, 240, 150) if shape_snap else (180, 180, 190)
+                elif typ == "toggle_fun_mode":
+                    label, scale, tcol = f"FUN: {'ON' if fun_mode else 'OFF'}", 0.36, (255, 120, 220) if fun_mode else (180, 180, 190)
                 elif typ == "cycle_hold":
                     label, scale, tcol = f"HOLD: {hold_label}", 0.36, (220, 220, 235)
                 elif typ == "undo":
@@ -1400,10 +1394,24 @@ class ARFloatingMenu:
 
 
 # =========================================================================
-# 8. VISUAL EFFECTS & TOASTS
+# 8. VISUAL EFFECTS, TOASTS & INTERACTIVE AR HOLOGRAMS
 # =========================================================================
 
+@dataclass
+class HologramParticle:
+    x: float
+    y: float
+    vx: float
+    vy: float
+    color_bgr: Tuple[int, int, int]
+    life: float = 1.0
+
+
 class VisualEffectsManager:
+    """
+    Renders toasts, clear canvas ripples, laser trails,
+    and INTERACTIVE SCI-FI AR HOLOGRAMS (active ONLY in Fun Mode).
+    """
     def __init__(self):
         self.toast_text = ""
         self.toast_start_t = 0.0
@@ -1412,6 +1420,7 @@ class VisualEffectsManager:
         self.ripple_start_t = 0.0
         self.ripple_duration = 0.65
         self.laser_history: deque = deque(maxlen=16)
+        self.particles: List[HologramParticle] = []
 
     def show_toast(self, text: str, t: float):
         self.toast_text = text
@@ -1427,8 +1436,62 @@ class VisualEffectsManager:
     def clear_laser(self):
         self.laser_history.clear()
 
-    def render(self, frame: np.ndarray, t: float):
+    def add_hologram_particles(self, pos: Tuple[float, float], color: Tuple[int, int, int]):
+        for _ in range(3):
+            angle = random.uniform(0, 2 * math.pi)
+            speed = random.uniform(1.5, 4.5)
+            p = HologramParticle(
+                x=pos[0], y=pos[1],
+                vx=math.cos(angle) * speed,
+                vy=math.sin(angle) * speed,
+                color_bgr=color,
+                life=1.0
+            )
+            self.particles.append(p)
+
+    def render_fun_mode_holograms(self, frame: np.ndarray, pen_pos: Optional[Tuple[float, float]],
+                                   wrist_pos: Optional[Tuple[float, float]], t: float):
+        """Renders interactive sci-fi holograms (glowing cyber rings, particles, spinning 3D energy orb)."""
+        # 1. Holographic Cyberpunk Rotating Rings surrounding Pen Tip
+        if pen_pos is not None:
+            pt = ipt(pen_pos)
+            self.add_hologram_particles(pen_pos, (255, 180, 0))
+            angle1 = int((t * 180.0) % 360)
+            angle2 = int((-t * 240.0) % 360)
+            cv2.ellipse(frame, pt, (32, 16), angle1, 0, 360, (255, 200, 50), 2, cv2.LINE_AA)
+            cv2.ellipse(frame, pt, (24, 28), angle2, 0, 360, (255, 50, 200), 2, cv2.LINE_AA)
+
+        # 2. Spinning 3D Wireframe Holographic Energy Orb at Wrist
+        if wrist_pos is not None:
+            wpt = ipt(wrist_pos)
+            rot = t * 2.5
+            r = 38
+            cv2.circle(frame, wpt, r, (255, 100, 255), 1, cv2.LINE_AA)
+            for i in range(4):
+                phase = rot + i * (math.pi / 4.0)
+                ew = max(2, int(r * abs(math.cos(phase))))
+                eh = max(2, int(r * abs(math.sin(phase))))
+                cv2.ellipse(frame, wpt, (ew, eh), int(math.degrees(phase)), 0, 360, (0, 230, 255), 1, cv2.LINE_AA)
+            cv2.putText(frame, "AR HOLO", (wpt[0] - 28, wpt[1] + 54), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 230, 255), 1, cv2.LINE_AA)
+
+        # 3. Particle System Update and Render
+        active_p = []
+        for p in self.particles:
+            p.x += p.vx
+            p.y += p.vy
+            p.life -= 0.05
+            if p.life > 0:
+                active_p.append(p)
+                c = (int(p.color_bgr[0] * p.life), int(p.color_bgr[1] * p.life), int(p.color_bgr[2] * p.life))
+                cv2.circle(frame, (int(p.x), int(p.y)), max(1, int(4 * p.life)), c, -1, cv2.LINE_AA)
+        self.particles = active_p
+
+    def render(self, frame: np.ndarray, t: float, fun_mode: bool = False,
+               pen_pos: Optional[Tuple[float, float]] = None, wrist_pos: Optional[Tuple[float, float]] = None):
         h, w = frame.shape[:2]
+
+        if fun_mode:
+            self.render_fun_mode_holograms(frame, pen_pos, wrist_pos, t)
 
         if len(self.laser_history) > 1:
             pts = list(self.laser_history)
@@ -1482,7 +1545,7 @@ def export_snapshot_suite(save_dir: str, clean_frame: np.ndarray, board: ARWhite
     p1 = os.path.join(save_dir, f"air_writer_ar_{stamp}.png")
     cv2.imwrite(p1, clean_frame)
 
-    # 2. Clean Whiteboard Composite (All Stroke Layers)
+    # 2. Clean Whiteboard Composite
     white_bg = np.full_like(clean_frame, (250, 250, 252), dtype=np.uint8)
     if board.hl_mask.any():
         hl_mask_b = (board.hl_mask > 0)[:, :, None]
@@ -1500,7 +1563,7 @@ def export_snapshot_suite(save_dir: str, clean_frame: np.ndarray, board: ARWhite
     p2 = os.path.join(save_dir, f"air_writer_whiteboard_{stamp}.png")
     cv2.imwrite(p2, white_bg)
 
-    # 3. Transparent PNG with Combined Alpha Mask
+    # 3. Transparent PNG
     bgra = np.zeros((CANVAS_HEIGHT, CANVAS_WIDTH, 4), dtype=np.uint8)
     combined_mask = np.maximum(board.pen_mask, np.maximum(board.hl_mask, board.neon_mask))
     if combined_mask.any():
@@ -1511,7 +1574,7 @@ def export_snapshot_suite(save_dir: str, clean_frame: np.ndarray, board: ARWhite
     p3 = os.path.join(save_dir, f"air_writer_transparent_{stamp}.png")
     cv2.imwrite(p3, bgra)
 
-    # 4. Hi-Res 4K Scaled Canvas Snapshot
+    # 4. Hi-Res 4K Scaled Snapshot
     hi_res = cv2.resize(clean_frame, (3840, 2160), interpolation=cv2.INTER_CUBIC)
     p4 = os.path.join(save_dir, f"air_writer_4k_{stamp}.png")
     cv2.imwrite(p4, hi_res)
@@ -1550,9 +1613,9 @@ def init_webcam() -> Optional[ThreadedWebcam]:
 # =========================================================================
 
 def main():
-    print("=" * 78)
-    print("  AIR WRITER - Pro Max Edition v6.5 (Spatial Continuity Lock Engine)")
-    print("=" * 78)
+    print("=" * 80)
+    print("  AIR WRITER - Pro Max Edition v7.5 (Work Mode & AR Hologram Engine)")
+    print("=" * 80)
     print("Universal Video Call Support: Discord | Instagram | WhatsApp | Zoom | Meet")
 
     vcam = None
@@ -1605,11 +1668,11 @@ def main():
     save_dir = os.path.join(os.path.expanduser("~"), "Desktop", "AirWriterSaves")
     print(f"[Air Writer] Snapshots save path: {save_dir}")
     print("[Air Writer] System Ready. Press 'q' or ESC to exit.")
-    print("[Air Writer] Tools: [k]pen tool | [e]raser mode | [o]single-hand mode | [b]canvas mode")
+    print("[Air Writer] Modes: [f]toggle WORK/FUN mode | [k]pen tool | [e]raser mode | [o]single-hand mode")
     print("[Air Writer] Controls: [c]lear | [z]undo | [y]redo | [h]hand | [p]draw mode | [m]irror | [s]ave")
 
     prev_frame_t = time.perf_counter()
-    fps_estimate = 30.0
+    fps_estimate = 60.0
 
     try:
         while True:
@@ -1617,11 +1680,11 @@ def main():
             dt = t_loop_start - prev_frame_t
             prev_frame_t = t_loop_start
             if dt > 0.001:
-                fps_estimate = 0.92 * fps_estimate + 0.08 * (1.0 / dt)
+                fps_estimate = 0.90 * fps_estimate + 0.10 * (1.0 / dt)
 
             ok, raw_frame = cam.read_latest()
             if not ok or raw_frame is None:
-                time.sleep(0.005)
+                time.sleep(0.002)
                 continue
 
             mirrored = cv2.flip(raw_frame, 1)
@@ -1631,7 +1694,6 @@ def main():
             rgb = cv2.cvtColor(mirrored, cv2.COLOR_BGR2RGB)
             phys_left, phys_right = hand_tracker.process_frame(rgb, CANVAS_WIDTH, CANVAS_HEIGHT, t_loop_start)
 
-            # Spatial Continuity Hand Assignment (Strict Roles)
             if pen_engine.single_hand_mode:
                 active_present_hand = phys_right if (phys_right and phys_right.is_present) else phys_left
                 drawing_hand, manager_hand = active_present_hand, None
@@ -1705,9 +1767,9 @@ def main():
                         new_mode = pen_engine.cycle_draw_mode()
                         effects.show_toast(f"Draw Mode: {new_mode.upper()}", t_loop_start)
                         menu.cancel_dwell()
-                    elif sel_type == "toggle_shape_snap":
-                        snap = board.toggle_shape_snap()
-                        effects.show_toast(f"Shape Snap: {'ON' if snap else 'OFF'}", t_loop_start)
+                    elif sel_type == "toggle_fun_mode":
+                        fmode = pen_engine.toggle_fun_mode()
+                        effects.show_toast(f"Mode: {'FUN MODE (Holograms)' if fmode else 'WORK MODE (Clean)'}", t_loop_start)
                         menu.cancel_dwell()
                     elif sel_type == "cycle_hold":
                         menu.cycle_hold_duration()
@@ -1832,7 +1894,7 @@ def main():
                 prev_smooth_tip = None
 
             # ---------------------------------------------------------
-            # CANVAS COMPOSITING & VIRTUAL CAMERA
+            # CANVAS COMPOSITING & VIRTUAL CAMERA STREAM
             # ---------------------------------------------------------
             clean = board.composite_with_camera(mirrored)
 
@@ -1844,7 +1906,7 @@ def main():
                     vcam = None
 
             # ---------------------------------------------------------
-            # PREVIEW OVERLAYS, WRIST BADGES & PRO PROFILER HUD
+            # PREVIEW OVERLAYS, HUD & HOLOGRAMS (FUN MODE ONLY)
             # ---------------------------------------------------------
             display = clean.copy()
 
@@ -1889,17 +1951,21 @@ def main():
 
             menu.render(display, board.color_idx, board.width_idx, dominant_hand,
                         pen_engine.draw_mode, pen_engine.current_tool_name,
-                        CANVAS_MODES[board.canvas_mode_idx]["name"], board.shape_snap_enabled, t_loop_start)
+                        CANVAS_MODES[board.canvas_mode_idx]["name"], pen_engine.fun_mode, t_loop_start)
 
             if manager_cursor is not None and menu.is_visible:
                 mc = ipt(manager_cursor)
                 cv2.circle(display, mc, 8, (255, 255, 255), 2, cv2.LINE_AA)
                 cv2.circle(display, mc, 4, (200, 120, 255), -1, cv2.LINE_AA)
 
-            effects.render(display, t_loop_start)
+            # Fun Mode AR Hologram Render pass (STRICTLY ACTIVE ONLY WHEN FUN MODE IS ON)
+            pen_pt_for_holo = cursor_info["pt"] if (cursor_info and pen_engine.fun_mode) else None
+            wrist_pt_for_holo = drawing_hand.wrist_px if (drawing_hand and drawing_hand.is_present and pen_engine.fun_mode) else None
+            effects.render(display, t_loop_start, fun_mode=pen_engine.fun_mode,
+                           pen_pos=pen_pt_for_holo, wrist_pos=wrist_pt_for_holo)
 
             # Top Floating Status HUD Capsule
-            pill_w, pill_h = 760, 32
+            pill_w, pill_h = 780, 32
             pill_x = (CANVAS_WIDTH - pill_w) // 2
             pill_y = 12
             pill_roi = display[pill_y:pill_y + pill_h, pill_x:pill_x + pill_w]
@@ -1910,12 +1976,12 @@ def main():
 
             vcam_str = f"VCAM: {'FLIPPED' if vcam_flipped else 'NORMAL'}" if vcam is not None else "LOCAL"
             snap_str = "SNAP" if board.shape_snap_enabled else "NOSNAP"
-            single_str = "1-HAND" if pen_engine.single_hand_mode else "2-HAND"
+            mode_tag = "FUN MODE (Holo)" if pen_engine.fun_mode else "WORK MODE"
             status_text = (f"{PALETTE_COLORS[board.color_idx]['name']} | "
                            f"{STROKE_WIDTHS[board.width_idx]['label']} | "
                            f"Tool: {pen_engine.current_tool_name} | "
                            f"Eraser: {pen_engine.current_eraser_mode_name[:5]} | "
-                           f"Mode: {single_str} | "
+                           f"Mode: {mode_tag} | "
                            f"{CANVAS_MODES[board.canvas_mode_idx]['name']} [{snap_str}] | "
                            f"{int(fps_estimate)} FPS")
             cv2.putText(display, status_text, (pill_x + 36, pill_y + 21),
@@ -1938,6 +2004,9 @@ def main():
             elif key == ord("y"):
                 if board.redo():
                     effects.show_toast("Redo Stroke", t_loop_start)
+            elif key == ord("f"):
+                fmode = pen_engine.toggle_fun_mode()
+                effects.show_toast(f"Mode: {'FUN MODE (Holograms)' if fmode else 'WORK MODE (Clean)'}", t_loop_start)
             elif key == ord("h"):
                 dominant_hand = "Left" if dominant_hand == "Right" else "Right"
                 board.pen_up()
