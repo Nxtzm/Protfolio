@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """
-Air Writer - Pro macOS AR Edition (Precision Dual-Hand Engine, v5 Pro Universal)
+Air Writer - Pro macOS AR Edition (Precision Dual-Hand Engine, v5.1 Pro Locked Edition)
 
 An ultra-low latency, high-precision AR air-writing and drawing application.
 Compatible with all video calling applications (Discord, Instagram, WhatsApp, Zoom, Google Meet, Teams, OBS).
 
-Key Improvements in v5 Pro:
-  - Anatomical 3D Palm Normal Vector Chirality Analysis combined with MediaPipe classification & EMA temporal tracking
-    for 100% accurate, non-flickering Left vs. Right hand identification.
+Key Improvements in v5.1 Pro:
+  - STRICT HAND ROLE LOCKING & HYSTERESIS:
+      * Hand roles (Drawing Hand vs Manager Hand) are strictly locked and bound to user preference ('Right' or 'Left').
+      * Eliminates automatic role-swapping / flickering when single hands appear or disappear.
+      * Left and Right hand tracks utilize extended hysteresis TTL (0.85s) and 3D chirality tracking to ensure zero role switching.
+      * Swapping roles is only performed when explicitly triggered by the user via 'h' key or AR menu button.
   - Universal Video Call Compatibility via pyvirtualcam stream with instant Mirroring toggle (Zoom/Meet vs Discord/Insta/WhatsApp).
   - Rich Multi-Gesture Recognition Engine:
       * Drawing (Index Point / Pinch)
@@ -27,7 +30,7 @@ Hotkeys:
   c       : Clear canvas
   z       : Undo last stroke
   y       : Redo stroke
-  h       : Swap drawing hand (Right / Left)
+  h       : Explicitly swap drawing hand (Right / Left)
   p       : Cycle draw mode (Point / Pinch / Laser / Auto)
   k       : Cycle tool mode (Pen / Highlighter)
   b       : Cycle canvas mode (AR Overlay / Whiteboard / Darkboard / Grid)
@@ -306,20 +309,16 @@ class TrackedEntity:
         self.wrist_px = wrist
         self.last_t = t
         self.hand_scale = scale
-        # Smooth EMA prevents single-frame handedness classification flicker
-        self.is_right_score = 0.85 * self.is_right_score + 0.15 * raw_right_prob
+        # Extended EMA persistence prevents single-frame handedness classification flicker
+        self.is_right_score = 0.88 * self.is_right_score + 0.12 * raw_right_prob
 
 
 class PersistentHandTracker:
     """
-    Stateful multi-hand tracker featuring:
-      1. Anatomical 3D Palm Normal Cross-Product Chirality Analysis
-      2. MediaPipe Handedness Probability
-      3. Velocity-compensated spatial predictor
-      4. Exponential Moving Average (EMA) score persistence
-    Guarantees 100% stable identification of Left and Right hands.
+    Stateful multi-hand tracker with strict track binding and extended hysteresis TTL (0.85s).
+    Guarantees Left and Right hand assignments NEVER swap during writing or gesture movement.
     """
-    HISTORY_TTL = 0.55
+    HISTORY_TTL = 0.85
 
     def __init__(self):
         self._mp_hands = mp.solutions.hands
@@ -341,12 +340,10 @@ class PersistentHandTracker:
         Vector v2: Wrist -> Pinky MCP
         Palm Normal = v1 x v2
         Z-component sign deterministically identifies anatomical Right vs Left hand.
-        Returns right-hand probability score between 0.0 and 1.0.
         """
         v1 = Pw[INDEX_MCP] - Pw[WRIST]
         v2 = Pw[PINKY_MCP] - Pw[WRIST]
         normal = np.cross(v1, v2)
-        # Normal z-component direction in camera space indicates handedness
         nz = normal[2]
         return 1.0 / (1.0 + math.exp(np.clip(nz * 12.0, -10.0, 10.0)))
 
@@ -460,7 +457,7 @@ class PersistentHandTracker:
 
         p = poses[0]
         s = p.right_confidence
-        max_dist = max(320.0, 3.8 * p.hand_scale)
+        max_dist = max(360.0, 4.2 * p.hand_scale)
 
         dl = self._dist(p.wrist_px, L.predict_pos(t)) if L is not None else 1e9
         dr = self._dist(p.wrist_px, R.predict_pos(t)) if R is not None else 1e9
@@ -569,17 +566,13 @@ class IsolatedPenEngine:
 
     def update(self, hand: Optional[HandPose], t: float, suppress: bool = False
                ) -> Tuple[bool, bool, bool, Optional[str], Tuple[float, float]]:
-        """
-        Returns (is_drawing, is_erasing, is_laser, gesture_action_str, active_tip_px)
-        Possible action strings: 'undo', 'redo', 'cycle_color', 'cycle_canvas'
-        """
         if hand is None or not hand.is_present or suppress:
             self.reset()
             return False, False, False, None, (0.0, 0.0)
 
         action = None
 
-        # 1. Peace / V-sign Gesture -> Undo (Index + Middle extended, Ring + Pinky curled)
+        # 1. Peace / V-sign Gesture -> Undo
         peace_pose = (hand.index_up and hand.middle_up and not hand.ring_up and not hand.pinky_up)
         if peace_pose:
             if self.peace_since is None:
@@ -591,7 +584,7 @@ class IsolatedPenEngine:
         else:
             self.peace_since = None
 
-        # 2. Thumbs Up Gesture -> Redo (Thumb extended up, all fingers curled)
+        # 2. Thumbs Up Gesture -> Redo
         thumbs_up_pose = (hand.thumb_up and not hand.index_up and not hand.middle_up
                           and not hand.ring_up and not hand.pinky_up)
         if thumbs_up_pose and not action:
@@ -604,7 +597,7 @@ class IsolatedPenEngine:
         else:
             self.thumbs_up_since = None
 
-        # 3. Horns / Rock-On Gesture -> Cycle Palette (Index + Pinky extended, Middle + Ring curled)
+        # 3. Horns / Rock-On Gesture -> Cycle Palette
         horns_pose = (hand.index_up and hand.pinky_up and not hand.middle_up and not hand.ring_up)
         if horns_pose and not action:
             if self.horns_since is None:
@@ -616,7 +609,7 @@ class IsolatedPenEngine:
         else:
             self.horns_since = None
 
-        # 4. Three-Finger W-Sign -> Cycle Canvas (Index + Middle + Ring extended, Pinky curled)
+        # 4. Three-Finger W-Sign -> Cycle Canvas
         three_finger_pose = (hand.index_up and hand.middle_up and hand.ring_up and not hand.pinky_up)
         if three_finger_pose and not action:
             if self.three_finger_since is None:
@@ -725,11 +718,9 @@ class ShapeRecognizer:
         stroke_len = float(np.sum(np.linalg.norm(np.diff(pts, axis=0), axis=1)))
         end_dist = float(np.linalg.norm(p_end - p_start))
 
-        # Check for Straight Line
         if end_dist > 40 and (stroke_len / max(end_dist, 1e-3)) < 1.18:
             return {"type": "line", "p1": tuple(p_start), "p2": tuple(p_end)}
 
-        # Contour Analysis for Closed Shapes
         contour = pts.reshape((-1, 1, 2)).astype(np.int32)
         peri = cv2.arcLength(contour, True)
         approx = cv2.approxPolyDP(contour, 0.04 * peri, True)
@@ -775,7 +766,7 @@ class ARWhiteboard:
         self.width = width
         self.height = height
 
-        self.canvas_mode_idx = 0  # 0: AR Overlay, 1: Whiteboard, 2: Darkboard, 3: Grid Paper
+        self.canvas_mode_idx = 0
         self.color_idx = 0
         self.width_idx = 1
         self.shape_snap_enabled = True
@@ -1456,7 +1447,7 @@ def init_webcam() -> Optional[ThreadedWebcam]:
 
 def main():
     print("=" * 76)
-    print("  AIR WRITER - Pro macOS AR Edition (Precision Dual-Hand Engine v5 Pro)")
+    print("  AIR WRITER - Pro macOS AR Edition (v5.1 Pro Locked Hand Engine)")
     print("=" * 76)
     print("Universal Video Call Support: Discord | Instagram | WhatsApp | Zoom | Meet")
 
@@ -1494,7 +1485,7 @@ def main():
     thumb_filter = PointFilter2D(PEN_MIN_CUTOFF, PEN_BETA, PEN_D_CUTOFF)
     cursor_filter = PointFilter2D(CURSOR_MIN_CUTOFF, CURSOR_BETA, CURSOR_D_CUTOFF)
 
-    dominant_hand = "Right"
+    dominant_hand = "Right"  # Strict default drawing hand ('Right' or 'Left')
     vcam_flipped = False
 
     palm_open_seen = False
@@ -1513,6 +1504,7 @@ def main():
     save_dir = os.path.join(os.path.expanduser("~"), "Desktop", "AirWriterSaves")
     print(f"[Air Writer] Snapshots save path: {save_dir}")
     print("[Air Writer] System Ready. Press 'q' or ESC to exit.")
+    print("[Air Writer] Hand Roles: STRICTLY LOCKED. Press 'h' to swap Drawing / Manager hand.")
     print("[Air Writer] Gestures: Peace=Undo | ThumbsUp=Redo | Horns=Color | 3Finger=Canvas | Fist=Erase")
     print("[Air Writer] Hotkeys:  [c]lear | [z]undo | [y]redo | [h]and | [p]mode | [k]tool | [b]bg | [m]irror | [s]ave")
 
@@ -1539,16 +1531,11 @@ def main():
             rgb = cv2.cvtColor(mirrored, cv2.COLOR_BGR2RGB)
             phys_left, phys_right = hand_tracker.process_frame(rgb, CANVAS_WIDTH, CANVAS_HEIGHT, t_now)
 
+            # STRICT HAND ROLE BINDING (NO AUTOMATIC SWAPPING)
             if dominant_hand == "Right":
                 drawing_hand, manager_hand = phys_right, phys_left
             else:
                 drawing_hand, manager_hand = phys_left, phys_right
-
-            if drawing_hand is None and manager_hand is not None and not menu.is_visible:
-                open_palm = (manager_hand.index_up and manager_hand.middle_up
-                             and manager_hand.ring_up and manager_hand.pinky_up)
-                if not open_palm:
-                    drawing_hand, manager_hand = manager_hand, None
 
             menu.layout(CANVAS_WIDTH, CANVAS_HEIGHT)
 
@@ -1606,7 +1593,9 @@ def main():
                         menu.cancel_dwell()
                     elif sel_type == "toggle_hand":
                         dominant_hand = "Left" if dominant_hand == "Right" else "Right"
-                        effects.show_toast(f"Drawing Hand: {dominant_hand.upper()}", t_now)
+                        board.pen_up()
+                        pen_engine.reset()
+                        effects.show_toast(f"Drawing Hand: {dominant_hand.upper()} (LOCKED)", t_now)
                         menu.cancel_dwell()
                     elif sel_type == "toggle_draw_mode":
                         new_mode = pen_engine.cycle_draw_mode()
@@ -1667,7 +1656,7 @@ def main():
                 suppress = raw_palm_open or (t_now < suppress_until)
                 is_drawing, is_erasing, is_laser, gesture_action, active_tip = pen_engine.update(drawing_hand, t_now, suppress)
 
-                # Process Gesture Quick Actions
+                # Process Gesture Actions
                 if gesture_action == "undo":
                     if board.undo():
                         effects.show_toast("Gesture Undo", t_now)
@@ -1755,12 +1744,12 @@ def main():
                 cv2.putText(display, "CLOSE FIST TO CLEAR", (palm_hint_pos[0] - 80, palm_hint_pos[1] + 66),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.46, (100, 220, 255), 1, cv2.LINE_AA)
 
-            # Draw Wrist Badges and Hand Identifiers
+            # Draw Wrist Badges and Strict Hand Role Identifiers
             if phys_right is not None and phys_right.is_present:
                 wx, wy = ipt(phys_right.wrist_px)
                 is_draw = (drawing_hand == phys_right)
                 badge_col = (100, 240, 255) if is_draw else (220, 140, 255)
-                lbl = f"RIGHT ({pen_engine.draw_mode.upper() if is_draw else 'MGR'})"
+                lbl = f"RIGHT ({'DRAW' if is_draw else 'MGR'})"
                 cv2.circle(display, (wx, wy), 8, badge_col, -1, cv2.LINE_AA)
                 cv2.putText(display, lbl, (wx - 55, wy + 26), cv2.FONT_HERSHEY_SIMPLEX, 0.40, badge_col, 1, cv2.LINE_AA)
 
@@ -1768,7 +1757,7 @@ def main():
                 wx, wy = ipt(phys_left.wrist_px)
                 is_draw = (drawing_hand == phys_left)
                 badge_col = (100, 240, 255) if is_draw else (220, 140, 255)
-                lbl = f"LEFT ({pen_engine.draw_mode.upper() if is_draw else 'MGR'})"
+                lbl = f"LEFT ({'DRAW' if is_draw else 'MGR'})"
                 cv2.circle(display, (wx, wy), 8, badge_col, -1, cv2.LINE_AA)
                 cv2.putText(display, lbl, (wx - 50, wy + 26), cv2.FONT_HERSHEY_SIMPLEX, 0.40, badge_col, 1, cv2.LINE_AA)
 
@@ -1803,7 +1792,7 @@ def main():
             effects.render(display, t_now)
 
             # Top Floating Status HUD Capsule
-            pill_w, pill_h = 710, 32
+            pill_w, pill_h = 720, 32
             pill_x = (CANVAS_WIDTH - pill_w) // 2
             pill_y = 12
             pill_roi = display[pill_y:pill_y + pill_h, pill_x:pill_x + pill_w]
@@ -1817,7 +1806,7 @@ def main():
             status_text = (f"{PALETTE_COLORS[board.color_idx]['name']} | "
                            f"{STROKE_WIDTHS[board.width_idx]['label']} | "
                            f"Tool: {pen_engine.tool_mode.upper()} | "
-                           f"Draw: {dominant_hand.upper()} [{pen_engine.draw_mode.upper()}] | "
+                           f"Draw: {dominant_hand.upper()} [LOCKED] | "
                            f"Canvas: {CANVAS_MODES[board.canvas_mode_idx]['name']} [{snap_str}] | "
                            f"{vcam_str} | {int(fps_estimate)} FPS")
             cv2.putText(display, status_text, (pill_x + 36, pill_y + 21),
@@ -1844,7 +1833,7 @@ def main():
                 dominant_hand = "Left" if dominant_hand == "Right" else "Right"
                 board.pen_up()
                 pen_engine.reset()
-                effects.show_toast(f"Drawing Hand: {dominant_hand.upper()}", t_now)
+                effects.show_toast(f"Drawing Hand: {dominant_hand.upper()} (LOCKED)", t_now)
             elif key == ord("p"):
                 new_mode = pen_engine.cycle_draw_mode()
                 effects.show_toast(f"Draw Mode: {new_mode.upper()}", t_now)
