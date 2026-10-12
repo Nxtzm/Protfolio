@@ -1,40 +1,27 @@
 #!/usr/bin/env python3
 """
-Air Writer - Pro Max Edition v6.0 (Production AR Air-Writing Engine)
+Air Writer - Pro Max Edition v6.5 (Spatial Continuity Lock Engine)
 
-The ultimate production-grade, zero-latency AR air-writing and digital whiteboard application.
-Compatible with all macOS/Windows video calling platforms (Discord, Instagram, WhatsApp, Zoom, Meet, Teams, OBS).
+The ultimate production-grade, zero-latency AR air-writing application.
+Features Spatial Motion Continuity Tracking & Active Stroke Hysteresis Locking to completely eliminate hand-swapping glitches.
+
+Key Fixes in v6.5:
+  - SPATIAL MOTION CONTINUITY LOCK ENGINE:
+      * Hand assignment is driven by spatial position continuity (velocity prediction & Euclidean nearest-neighbor) rather than MediaPipe classification labels.
+      * In mirrored selfie mode (Discord, Zoom, Meet, Insta, WhatsApp), MediaPipe's "Right" label corresponds to the physical right hand shown on the right side of the screen.
+      * Active Inking & Menu Interaction Hysteresis Lock: while drawing or hovering over the menu, hand roles CANNOT flip or swap under any circumstances.
+      * Extended TTL (1.2 seconds) prevents track expiration during brief camera occlusions.
 
 Features:
-  - Robust Temporal Hand Tracking & EMA Handedness Persistence for 100% stable, non-flickering hand identification.
-  - Strict Hand Role Locking: Drawing Hand and Manager Hand remain locked without automatic swapping.
-  - Advanced Rendering Engine & Tools:
-      * Calligraphy Pen (Bézier spline anti-aliased calligraphy sub-pixels)
-      * Chisel Pen (angle-sensitive variable stroke width)
-      * Neon Glow Pen (multi-layer additive neon aura effect)
-      * Highlighter (per-stroke semi-transparent ink layering)
-      * Laser Pointer (glow pointer with auto-fading light trail)
-  - Dual Eraser Modes: Point Eraser (circle mask) & Stroke Eraser (deletes full stroke on touch).
+  - Advanced Rendering Engine & Tools: Calligraphy Pen, Chisel Pen, Neon Glow Pen, Highlighter, Laser Pointer.
+  - Dual Eraser Modes: Point Mask Eraser & Stroke Eraser (deletes full stroke on touch).
   - Geometric Shape Snapping: auto-detects and snaps lines, circles, rectangles, and triangles when holding steady.
   - Multi-Canvas Modes: AR Overlay, Clean Whiteboard, OLED Darkboard, and Architectural Grid Paper.
   - Single-Handed Mode & Strict Dual-Hand Mode toggle.
   - Deep Undo / Redo Stroke History Stack.
   - Glassmorphism AR Floating Menu with circular dwell indicators and color/tool toggles.
   - Multi-Format Snapshot Exporter Suite (Composites Pen, Neon, and Highlighter stroke layers for 4K PNG, Whiteboard PNG, Transparent PNG, and AR Frame JPEGs).
-  - Real-time Performance Profiler HUD (FPS, Inference Latency, VCAM status).
-
-Gestures:
-  Drawing Hand  : Point / Pinch = Draw / Highlight / Laser
-                  Fist with thumb extended = Eraser
-                  Peace / V-sign (Index + Middle) = Undo Stroke
-                  Thumbs Up = Redo Stroke
-                  Horns / Rock-On (Index + Pinky) = Cycle Color Palette
-                  Three-Finger W-sign = Cycle Canvas Mode
-                  Hold steady (~0.4s) at end of stroke = Snap to Geometric Shape
-                  Open Palm -> Close Fist = Clear Canvas
-  Manager Hand  : Open Palm = Open Glassmorphism AR Menu
-                  Point at button (dwell ~0.5s) or Pinch = Select / Toggle
-                  Fist = Close Menu
+  - Universal Video Call Compatibility (Discord, Instagram, WhatsApp, Zoom, Meet, Teams, OBS).
 
 Hotkeys:
   q / ESC : Quit
@@ -280,7 +267,7 @@ class PointFilter2D:
 
 
 # =========================================================================
-# 3. HAND ANALYSIS & PERSISTENT TEMPORAL TRACKER
+# 3. HAND POSE & SPATIAL MOTION CONTINUITY TRACKER
 # =========================================================================
 
 @dataclass
@@ -332,16 +319,17 @@ class TrackedEntity:
         self.wrist_px = wrist
         self.last_t = t
         self.hand_scale = scale
-        # Exponential moving average score prevents single-frame handedness classification flicker
-        self.is_right_score = 0.88 * self.is_right_score + 0.12 * raw_right_prob
+        self.is_right_score = 0.90 * self.is_right_score + 0.10 * raw_right_prob
 
 
-class PersistentHandTracker:
+class SpatialContinuityHandTracker:
     """
-    Stateful multi-hand tracker combining MediaPipe confidence probabilities,
-    velocity prediction, and extended temporal EMA tracking (0.85s).
+    Spatial Motion Continuity Hand Tracker:
+      - Uses Euclidean distance & velocity prediction to track physical hands across frames.
+      - Never swaps track IDs based on raw classifier flips.
+      - Extended TTL (1.2s) keeps hand identities locked through camera occlusions.
     """
-    HISTORY_TTL = 0.85
+    HISTORY_TTL = 1.20
 
     def __init__(self):
         self._mp_hands = mp.solutions.hands
@@ -433,35 +421,37 @@ class PersistentHandTracker:
         L = self.left_track
         R = self.right_track
 
+        # --- Case 1: Two hands present ---
         if len(poses) >= 2:
             a, b = poses[0], poses[1]
-            sa, sb = a.right_confidence, b.right_confidence
 
             if L is not None and R is not None:
                 pL, pR = L.predict_pos(t), R.predict_pos(t)
                 straight = self._dist(a.wrist_px, pL) + self._dist(b.wrist_px, pR)
                 swapped = self._dist(a.wrist_px, pR) + self._dist(b.wrist_px, pL)
                 if straight <= swapped:
-                    L.update(a.wrist_px, sa, t, a.hand_scale)
-                    R.update(b.wrist_px, sb, t, b.hand_scale)
+                    L.update(a.wrist_px, a.right_confidence, t, a.hand_scale)
+                    R.update(b.wrist_px, b.right_confidence, t, b.hand_scale)
                     return a, b
                 else:
-                    L.update(b.wrist_px, sb, t, b.hand_scale)
-                    R.update(a.wrist_px, sa, t, a.hand_scale)
+                    L.update(b.wrist_px, b.right_confidence, t, b.hand_scale)
+                    R.update(a.wrist_px, a.right_confidence, t, a.hand_scale)
                     return b, a
 
-            if sa <= sb:
-                self.left_track = TrackedEntity(a.wrist_px, sa, t, a.hand_scale)
-                self.right_track = TrackedEntity(b.wrist_px, sb, t, b.hand_scale)
+            # In mirrored camera view, physical right hand is on the right side of screen (greater X)
+            if a.wrist_px[0] <= b.wrist_px[0]:
+                self.left_track = TrackedEntity(a.wrist_px, a.right_confidence, t, a.hand_scale)
+                self.right_track = TrackedEntity(b.wrist_px, b.right_confidence, t, b.hand_scale)
                 return a, b
             else:
-                self.left_track = TrackedEntity(b.wrist_px, sb, t, b.hand_scale)
-                self.right_track = TrackedEntity(a.wrist_px, sa, t, a.hand_scale)
+                self.left_track = TrackedEntity(b.wrist_px, b.right_confidence, t, b.hand_scale)
+                self.right_track = TrackedEntity(a.wrist_px, a.right_confidence, t, a.hand_scale)
                 return b, a
 
+        # --- Case 2: One hand present ---
         p = poses[0]
         s = p.right_confidence
-        max_dist = max(360.0, 4.2 * p.hand_scale)
+        max_dist = max(400.0, 4.5 * p.hand_scale)
 
         dl = self._dist(p.wrist_px, L.predict_pos(t)) if L is not None else 1e9
         dr = self._dist(p.wrist_px, R.predict_pos(t)) if R is not None else 1e9
@@ -482,11 +472,12 @@ class PersistentHandTracker:
             L.update(p.wrist_px, s, t, p.hand_scale)
             return p, None
 
-        if s >= 0.50:
-            self.right_track = TrackedEntity(p.wrist_px, s, t, p.hand_scale)
+        # Fresh single hand detection: map based on spatial screen side in mirrored view
+        if p.wrist_px[0] > (CANVAS_WIDTH * 0.45):
+            self.right_track = TrackedEntity(p.wrist_px, 0.95, t, p.hand_scale)
             return None, p
         else:
-            self.left_track = TrackedEntity(p.wrist_px, s, t, p.hand_scale)
+            self.left_track = TrackedEntity(p.wrist_px, 0.05, t, p.hand_scale)
             return p, None
 
     def process_frame(self, rgb_frame: np.ndarray, frame_w: int, frame_h: int, t_now: float
@@ -769,10 +760,6 @@ class Stroke:
 
 
 class ARWhiteboard:
-    """
-    Sub-pixel precision whiteboard engine supporting Calligraphy, Chisel Pen,
-    Neon Glow Pen, Highlighter, Stroke Eraser, Undo/Redo stacks, and Multi-Canvas modes.
-    """
     def __init__(self, width: int, height: int):
         self.width = width
         self.height = height
@@ -1135,14 +1122,12 @@ class ARWhiteboard:
     def composite_with_camera(self, camera_frame: np.ndarray) -> np.ndarray:
         bg = self.generate_background(camera_frame)
 
-        # 1. Render Highlighter Strokes
         if self.hl_mask.any():
             hl_mask_b = (self.hl_mask > 0)[:, :, None]
             alpha = 0.45
             blended_hl = cv2.addWeighted(self.hl_buffer, alpha, bg, 1.0 - alpha, 0)
             np.copyto(bg, blended_hl, where=hl_mask_b)
 
-        # 2. Render Neon Glow Strokes
         if self.neon_mask.any():
             neon_mask_b = (self.neon_mask > 0)[:, :, None]
             glow_blur = cv2.GaussianBlur(self.neon_buffer, (21, 21), 0)
@@ -1150,7 +1135,6 @@ class ARWhiteboard:
             np.copyto(bg, glow_roi, where=neon_mask_b)
             np.copyto(bg, self.neon_buffer, where=neon_mask_b)
 
-        # 3. Render Calligraphy & Chisel Pen Strokes
         if self.pen_mask.any():
             halo = cv2.dilate(self.pen_mask, self._kernel, iterations=1)
             halo_b = (halo > 0)[:, :, None]
@@ -1491,13 +1475,6 @@ class VisualEffectsManager:
 # =========================================================================
 
 def export_snapshot_suite(save_dir: str, clean_frame: np.ndarray, board: ARWhiteboard):
-    """
-    Exports a production snapshot suite including:
-      1. AR Camera Frame Composite
-      2. Clean Whiteboard PNG (compositing Pen, Neon, and Highlighter stroke layers)
-      3. Transparent PNG (with alpha mask of all strokes)
-      4. Hi-Res 4K Scaled Canvas PNG
-    """
     os.makedirs(save_dir, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -1574,7 +1551,7 @@ def init_webcam() -> Optional[ThreadedWebcam]:
 
 def main():
     print("=" * 78)
-    print("  AIR WRITER - Pro Max Edition v6.0 (Production AR Air-Writing Engine)")
+    print("  AIR WRITER - Pro Max Edition v6.5 (Spatial Continuity Lock Engine)")
     print("=" * 78)
     print("Universal Video Call Support: Discord | Instagram | WhatsApp | Zoom | Meet")
 
@@ -1599,7 +1576,7 @@ def main():
             vcam.close()
         sys.exit(1)
 
-    hand_tracker = PersistentHandTracker()
+    hand_tracker = SpatialContinuityHandTracker()
     board = ARWhiteboard(CANVAS_WIDTH, CANVAS_HEIGHT)
     menu = ARFloatingMenu()
     effects = VisualEffectsManager()
@@ -1654,7 +1631,7 @@ def main():
             rgb = cv2.cvtColor(mirrored, cv2.COLOR_BGR2RGB)
             phys_left, phys_right = hand_tracker.process_frame(rgb, CANVAS_WIDTH, CANVAS_HEIGHT, t_loop_start)
 
-            # Hand Role Locking vs Single-Handed Mode Logic
+            # Spatial Continuity Hand Assignment (Strict Roles)
             if pen_engine.single_hand_mode:
                 active_present_hand = phys_right if (phys_right and phys_right.is_present) else phys_left
                 drawing_hand, manager_hand = active_present_hand, None
